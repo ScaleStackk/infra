@@ -61,7 +61,7 @@ call the API until HTTPS is configured.
 The helper never installs software. It exits if the AWS CLI is unavailable.
 
 ```bash
-cd /Users/abhmya01/local_llm/aws
+cd /Users/abhmya01/local_llm/infra
 chmod +x deploy.sh
 
 export AWS_REGION_NAME=ap-south-1
