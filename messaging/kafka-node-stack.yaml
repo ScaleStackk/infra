@@ -1,0 +1,359 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  QuestaCase POC messaging node: one public EC2 instance running a single-node
+  Apache Kafka broker in KRaft mode with a stable Elastic IP.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+    Description: Short environment label used in resource names and tags.
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - c7i-flex.large
+      - m7i-flex.large
+    Description: t3.small is the minimum recommended size for the single-broker POC.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Current Amazon Linux 2023 x86-64 AMI.
+
+  RootVolumeSize:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 200
+    Description: Encrypted gp3 volume size in GiB, including Kafka data.
+
+  PrimaryClientCidr:
+    Type: String
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    Description: >-
+      Required client CIDR allowed to use Kafka, preferably a Web API or worker
+      Elastic IP followed by /32.
+
+  SecondaryClientCidr:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    Description: Optional second client CIDR, normally another instance IP /32.
+
+  TertiaryClientCidr:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    Description: Optional third client CIDR, normally another instance IP /32.
+
+  MessageQueueRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/msg_queue.git
+    AllowedPattern: '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
+
+  MessageQueueRepositoryBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+Conditions:
+  HasSecondaryClient:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: SecondaryClientCidr
+          - ""
+  HasTertiaryClient:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: TertiaryClientCidr
+          - ""
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.47.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-kafka-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: InternetGateway
+      VpcId:
+        Ref: Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      CidrBlock: 10.47.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: Vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-kafka-public-a
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+      RouteTableId:
+        Ref: PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet
+
+  KafkaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Restricted public access to the QuestaCase POC Kafka broker
+      SecurityGroupIngress:
+        - Description: Primary Kafka client CIDR
+          IpProtocol: tcp
+          FromPort: 9092
+          ToPort: 9092
+          CidrIp:
+            Ref: PrimaryClientCidr
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: Vpc
+
+  SecondaryKafkaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasSecondaryClient
+    Properties:
+      Description: Secondary Kafka client CIDR
+      GroupId:
+        Fn::GetAtt:
+          - KafkaSecurityGroup
+          - GroupId
+      IpProtocol: tcp
+      FromPort: 9092
+      ToPort: 9092
+      CidrIp:
+        Ref: SecondaryClientCidr
+
+  TertiaryKafkaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasTertiaryClient
+    Properties:
+      Description: Tertiary Kafka client CIDR
+      GroupId:
+        Fn::GetAtt:
+          - KafkaSecurityGroup
+          - GroupId
+      IpProtocol: tcp
+      FromPort: 9092
+      ToPort: 9092
+      CidrIp:
+        Ref: TertiaryClientCidr
+
+  KafkaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  KafkaInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: KafkaRole
+
+  KafkaHost:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId:
+        Ref: LatestAmiId
+      InstanceType:
+        Ref: InstanceType
+      IamInstanceProfile:
+        Ref: KafkaInstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 2
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - Ref: KafkaSecurityGroup
+          SubnetId:
+            Ref: PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize:
+              Ref: RootVolumeSize
+            VolumeType: gp3
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/usr/bin/env bash
+            set -Eeuo pipefail
+            exec > >(tee /var/log/questacase-kafka-bootstrap.log | logger -t questacase-kafka -s 2>/dev/console) 2>&1
+
+            dnf install -y docker git
+            systemctl enable --now docker
+
+            install -d -m 0755 /opt/questacase
+            git clone --depth 1 --branch '${MessageQueueRepositoryBranch}' '${MessageQueueRepositoryUrl}' /opt/questacase/msg_queue
+
+            docker build --tag legal-kafka:4.4.0-native /opt/questacase/msg_queue
+            docker volume inspect questacase-kafka-data >/dev/null 2>&1 || docker volume create questacase-kafka-data
+
+            cat > /usr/local/sbin/start-questacase-kafka <<'STARTER'
+            #!/usr/bin/env bash
+            set -Eeuo pipefail
+
+            public_hostname=""
+            for attempt in {1..60}; do
+              imds_token="$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' http://169.254.169.254/latest/api/token || true)"
+              if [[ -n "$imds_token" ]]; then
+                public_hostname="$(curl -fsS -H "X-aws-ec2-metadata-token: $imds_token" http://169.254.169.254/latest/meta-data/public-hostname || true)"
+              fi
+              [[ -n "$public_hostname" ]] && break
+              sleep 2
+            done
+            if [[ -z "$public_hostname" ]]; then
+              echo "EC2 public hostname is unavailable" >&2
+              exit 1
+            fi
+
+            docker rm --force legal-kafka >/dev/null 2>&1 || true
+            exec docker run --rm \
+              --name legal-kafka \
+              --hostname kafka \
+              --publish 9092:9092 \
+              --env CLUSTER_ID=4L6g3nShT-eMCtK--X86sw \
+              --env KAFKA_NODE_ID=1 \
+              --env KAFKA_PROCESS_ROLES=broker,controller \
+              --env KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093 \
+              --env KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+              --env KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT \
+              --env KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:19092,EXTERNAL://:9092 \
+              --env "KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:19092,EXTERNAL://$public_hostname:9092" \
+              --env KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL \
+              --env KAFKA_LOG_DIRS=/var/lib/kafka/data \
+              --env KAFKA_AUTO_CREATE_TOPICS_ENABLE=false \
+              --env KAFKA_NUM_PARTITIONS=8 \
+              --env KAFKA_DEFAULT_REPLICATION_FACTOR=1 \
+              --env KAFKA_MIN_INSYNC_REPLICAS=1 \
+              --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+              --env KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+              --env KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+              --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR=1 \
+              --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR=1 \
+              --env KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+              --env KAFKA_LOG_RETENTION_HOURS=168 \
+              --env KAFKA_LOG_SEGMENT_BYTES=268435456 \
+              --memory 768m \
+              --cpus 1.0 \
+              --volume questacase-kafka-data:/var/lib/kafka/data \
+              legal-kafka:4.4.0-native
+            STARTER
+            chmod 0755 /usr/local/sbin/start-questacase-kafka
+
+            cat > /etc/systemd/system/questacase-kafka.service <<'SERVICE'
+            [Unit]
+            Description=QuestaCase Kafka container
+            Requires=docker.service
+            After=docker.service network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            ExecStart=/usr/local/sbin/start-questacase-kafka
+            ExecStop=-/usr/bin/docker stop legal-kafka
+            Restart=always
+            RestartSec=10
+            TimeoutStopSec=45
+
+            [Install]
+            WantedBy=multi-user.target
+            SERVICE
+            systemctl daemon-reload
+            systemctl enable --now questacase-kafka
+
+            cat > /opt/questacase/DEPLOYMENT.txt <<'INFO'
+            QuestaCase Kafka bootstrap completed.
+            Container: legal-kafka
+            Logs: /var/log/questacase-kafka-bootstrap.log
+            Use AWS Systems Manager Session Manager for shell access.
+            INFO
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-kafka
+
+Outputs:
+  KafkaInstanceId:
+    Description: EC2 instance running the Kafka container.
+    Value:
+      Ref: KafkaHost
+
+  KafkaBroker:
+    Description: >-
+      Supply this host:port value to Web API and worker KAFKA_BROKERS. It changes
+      after an EC2 stop/start because this stack intentionally has no Elastic IP.
+    Value:
+      Fn::Sub: ${KafkaHost.PublicDnsName}:9092
+
+  SessionManagerCommand:
+    Description: Shell access without opening SSH.
+    Value:
+      Fn::Sub: aws ssm start-session --target ${KafkaHost} --region ${AWS::Region}
+
+  BootstrapLogCommand:
+    Description: Run this after opening a Session Manager shell.
+    Value: sudo tail -n 200 /var/log/questacase-kafka-bootstrap.log

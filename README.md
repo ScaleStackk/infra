@@ -3,8 +3,9 @@
 This repository contains all AWS provisioning for QuestaCase:
 
 - `phase1-upload-stack.yaml` provisions the upload/API demonstration stack.
-- `application/application-node-stack.yaml` provisions the combined Web API,
-  Kafka, and inference load-balancer node.
+- `application/application-node-stack.yaml` provisions the Web API and
+  inference load-balancer node.
+- `messaging/kafka-node-stack.yaml` provisions the dedicated Kafka node.
 - `distributed/` contains Web API plus CPU and GPU inference stacks.
 - `storage/` contains the Neo4j and Qdrant storage stacks.
 
@@ -26,24 +27,20 @@ This CloudFormation stack creates the upload path needed by the Firebase UI:
 - Optional automatic Docker builds of the Web API and Kafka from public GitHub
   repositories.
 
-## Combined application node
+## Application node
 
 `application/application-node-stack.yaml` creates one EC2 instance and starts
-three separate containers on it:
+two containers on it:
 
 - `questacase-webapi`, exposed on port 8080;
-- `legal-kafka`, exposed on port 9092 only to `KafkaIngressCidr` and advertised
-  to workers through the stack's Elastic IP;
 - `questacase-inference-lb`, available only to Web API as
   `http://inference:11434` on the shared Docker network.
 
 The template accepts the comma-separated inference nodes and the Neo4j,
 Qdrant, and embedding API endpoints as parameters. It also creates the private
 judgment S3 bucket and gives the EC2 role access only to its `judgments/`
-prefix. Upload this single YAML file in CloudFormation after the external
-service endpoints are known. Use an exact worker public-IP CIDR such as
-`203.0.113.10/32` for Kafka; never expose the plaintext demo broker to the
-whole internet.
+prefix. Supply the `KafkaBroker` output from the messaging stack as the
+application stack's `KafkaBrokers` parameter.
 
 The checked-in application template currently defaults to the deployed
 Neo4j, Qdrant, and Qwen inference hostnames. Storage credentials are still
@@ -54,9 +51,21 @@ an additional TLS edge container. Without a domain, the output is an HTTP URL,
 which is useful for direct testing but cannot be called from an HTTPS Firebase
 page because browsers block mixed content.
 
-This is deliberately the phase 1 compute layout: the Web API and Kafka run as
-separate containers on one EC2 instance. Neo4j, Qdrant, extraction workers and
-inference nodes are not created by this stack.
+Neo4j, Qdrant, Kafka, extraction workers and inference nodes are not created by
+the application stack.
+
+## Dedicated Kafka node
+
+`messaging/kafka-node-stack.yaml` creates a minimal `t3.small` Amazon Linux
+instance with a 20 GiB encrypted gp3 root disk and runs the `legal-kafka`
+container. It has no Elastic IP. Kafka discovers and advertises the current EC2
+public DNS name on every boot, and the stack outputs that address as
+`KafkaBroker`.
+
+Supply the Web API, KG-worker and embedding-worker public IPs as `/32` client
+CIDRs. Kafka uses plaintext transport for this POC, so do not open port 9092 to
+`0.0.0.0/0`. After a stop/start, update clients with the new Kafka public DNS
+and update the stack's client CIDRs if any client public IPs also changed.
 
 ## Before deployment
 

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   QuestaCase POC application node: one public EC2 instance running the Web API,
-  a single-node Kafka KRaft broker, and an HAProxy inference load balancer.
+  and an HAProxy inference load balancer. Kafka runs on its own EC2 instance.
 
 Parameters:
   EnvironmentName:
@@ -19,7 +19,7 @@ Parameters:
       - c7i-flex.large
       - m7i-flex.large
     Description: >-
-      m7i-flex.large is recommended for Kafka, Web API, and HAProxy together.
+      m7i-flex.large is recommended for Web API, HAProxy, and query embeddings.
 
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -31,7 +31,7 @@ Parameters:
     Default: 40
     MinValue: 30
     MaxValue: 200
-    Description: Encrypted gp3 root volume size in GiB; it also stores Kafka data.
+    Description: Encrypted gp3 root volume size in GiB.
 
   JudgmentBucketName:
     Type: String
@@ -55,13 +55,12 @@ Parameters:
     AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
     Description: CIDR allowed to call the public Web API on TCP 8080.
 
-  KafkaIngressCidr:
+  KafkaBrokers:
     Type: String
-    Default: 127.0.0.1/32
-    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
     Description: >-
-      Public CIDR allowed to reach Kafka on TCP 9092. Set this to the worker
-      instance public-IP CIDR; do not use 0.0.0.0/0 for this plaintext broker.
+      KafkaBroker output from messaging/kafka-node-stack.yaml, normally an EC2
+      public DNS hostname followed by :9092.
 
   ApiDomainName:
     Type: String
@@ -80,16 +79,6 @@ Parameters:
     AllowedPattern: '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
 
   WebApiRepositoryBranch:
-    Type: String
-    Default: main
-    AllowedPattern: "^[A-Za-z0-9._/-]+$"
-
-  MessageQueueRepositoryUrl:
-    Type: String
-    Default: https://github.com/ScaleStackk/msg_queue.git
-    AllowedPattern: '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
-
-  MessageQueueRepositoryBranch:
     Type: String
     Default: main
     AllowedPattern: "^[A-Za-z0-9._/-]+$"
@@ -357,12 +346,6 @@ Resources:
           ToPort: 8080
           CidrIp:
             Ref: ApiIngressCidr
-        - Description: Kafka access restricted to worker CIDR
-          IpProtocol: tcp
-          FromPort: 9092
-          ToPort: 9092
-          CidrIp:
-            Ref: KafkaIngressCidr
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
@@ -447,45 +430,8 @@ Resources:
             install -d -m 0755 /opt/questacase
             docker network inspect questacase >/dev/null 2>&1 || docker network create questacase
 
-            git clone --depth 1 --branch '${MessageQueueRepositoryBranch}' '${MessageQueueRepositoryUrl}' /opt/questacase/msg_queue
             git clone --depth 1 --branch '${InferenceRepositoryBranch}' '${InferenceRepositoryUrl}' /opt/questacase/inference
             git clone --depth 1 --branch '${WebApiRepositoryBranch}' '${WebApiRepositoryUrl}' /opt/questacase/webapi
-
-            docker build --tag legal-kafka:4.4.0-native /opt/questacase/msg_queue
-            docker volume inspect questacase-kafka-data >/dev/null 2>&1 || docker volume create questacase-kafka-data
-            docker run --detach \
-              --name legal-kafka \
-              --hostname kafka \
-              --restart unless-stopped \
-              --network questacase \
-              --network-alias kafka \
-              --publish 9092:9092 \
-              --env CLUSTER_ID=4L6g3nShT-eMCtK--X86sw \
-              --env KAFKA_NODE_ID=1 \
-              --env KAFKA_PROCESS_ROLES=broker,controller \
-              --env KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093 \
-              --env KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
-              --env KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT \
-              --env KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:19092,EXTERNAL://:9092 \
-              --env KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:19092,EXTERNAL://${ApplicationElasticIp}:9092 \
-              --env KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL \
-              --env KAFKA_LOG_DIRS=/var/lib/kafka/data \
-              --env KAFKA_AUTO_CREATE_TOPICS_ENABLE=false \
-              --env KAFKA_NUM_PARTITIONS=8 \
-              --env KAFKA_DEFAULT_REPLICATION_FACTOR=1 \
-              --env KAFKA_MIN_INSYNC_REPLICAS=1 \
-              --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
-              --env KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
-              --env KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
-              --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR=1 \
-              --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR=1 \
-              --env KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
-              --env KAFKA_LOG_RETENTION_HOURS=168 \
-              --env KAFKA_LOG_SEGMENT_BYTES=268435456 \
-              --memory 1g \
-              --cpus 1.5 \
-              --volume questacase-kafka-data:/var/lib/kafka/data \
-              legal-kafka:4.4.0-native
 
             docker build \
               --tag questacase-inference-lb:3.4.7 \
@@ -515,7 +461,7 @@ Resources:
             S3_ENDPOINT=
             S3_FORCE_PATH_STYLE=false
             MAX_PDF_BYTES=52428800
-            KAFKA_BROKERS=kafka:19092
+            KAFKA_BROKERS=${KafkaBrokers}
             KAFKA_CLIENT_ID=questacase-webapi
             KAFKA_UPLOAD_TOPIC=judgment.uploaded
             KAFKA_SSL=false
@@ -573,7 +519,7 @@ Resources:
 
             cat > /opt/questacase/DEPLOYMENT.txt <<'INFO'
             QuestaCase application-node bootstrap completed.
-            Containers: legal-kafka, questacase-inference-lb, questacase-webapi.
+            Containers: questacase-inference-lb, questacase-webapi.
             Logs: /var/log/questacase-bootstrap.log
             Runtime configuration: /opt/questacase/webapi.env
             Use AWS Systems Manager Session Manager for shell access.
@@ -607,7 +553,7 @@ Resources:
 
 Outputs:
   ApplicationInstanceId:
-    Description: EC2 instance running Web API, Kafka, and HAProxy.
+    Description: EC2 instance running Web API and HAProxy.
     Value:
       Ref: ApplicationHost
 
@@ -625,11 +571,6 @@ Outputs:
         - HasApiDomain
         - Fn::Sub: https://${ApiDomainName}/api/v1
         - Fn::Sub: http://${ApplicationElasticIp}:8080/api/v1
-
-  KafkaBroker:
-    Description: External Kafka address for KG and embedding workers.
-    Value:
-      Fn::Sub: ${ApplicationElasticIp}:9092
 
   JudgmentBucket:
     Description: Private S3 bucket used for judgment PDFs.
