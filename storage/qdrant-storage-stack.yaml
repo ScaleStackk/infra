@@ -190,7 +190,9 @@ Resources:
           set -Eeuo pipefail
           exec > >(tee /var/log/questacase-qdrant-bootstrap.log | logger -t questacase-qdrant -s 2>/dev/console) 2>&1
 
-          dnf install -y git curl xfsprogs
+          # The ECS-optimized AL2023 image already includes curl-minimal, which
+          # provides the curl command. Installing full curl conflicts with it.
+          dnf install -y git xfsprogs
           systemctl disable --now ecs || true
 
           DATA_VOLUME_ID='${DataVolume}'
