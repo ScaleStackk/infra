@@ -1,0 +1,302 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: QuestaCase Neo4j storage node with public Browser/Bolt access and retained EBS-backed Docker data.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+  VpcCidr:
+    Type: String
+    Default: 10.60.0.0/16
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.60.1.0/24
+  PublicIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^(?:\d{1,3}\.){3}\d{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$
+    Description: CIDR allowed to access Neo4j Browser and Bolt. Use your public IP with /32 whenever possible.
+  InstanceType:
+    Type: String
+    Default: c7i-flex.large
+  RootVolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+  DataVolumeSize:
+    Type: Number
+    Default: 50
+    MinValue: 50
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+  DockerComposeVersion:
+    Type: String
+    Default: v5.6.1
+  RepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/kg_storage.git
+  RepositoryBranch:
+    Type: String
+    Default: main
+  Neo4jPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    MaxLength: 128
+    AllowedPattern: ^[A-Za-z0-9._~!@#%^*+=-]+$
+    ConstraintDescription: Use 12-128 characters without spaces, quotes, dollar signs, colons or slashes.
+  Neo4jImage:
+    Type: String
+    Default: questacase-neo4j:2026.10.1
+  Neo4jVersion:
+    Type: String
+    Default: 2026.10.1
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-neo4j-vpc
+        - Key: Project
+          Value: QuestaCase
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-neo4j-public
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref PublicSubnet
+
+  StorageSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public Neo4j Browser and Bolt access for the controlled POC
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 7474
+          ToPort: 7474
+          CidrIp: !Ref PublicIngressCidr
+          Description: Neo4j Browser and HTTP API
+        - IpProtocol: tcp
+          FromPort: 7687
+          ToPort: 7687
+          CidrIp: !Ref PublicIngressCidr
+          Description: Neo4j Bolt
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: QuestaCase
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  StorageInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: InternetRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref StorageSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-neo4j
+        - Key: Project
+          Value: QuestaCase
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          exec > >(tee /var/log/questacase-neo4j-bootstrap.log | logger -t questacase-neo4j -s 2>/dev/console) 2>&1
+
+          dnf install -y git curl xfsprogs
+          systemctl disable --now ecs || true
+
+          DATA_VOLUME_ID='${DataVolume}'
+          DATA_VOLUME_SERIAL="$(printf '%s' "$DATA_VOLUME_ID" | tr -d '-')"
+          BY_ID="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$DATA_VOLUME_SERIAL"
+          DEVICE=""
+          for attempt in {1..60}; do
+            if [[ -e "$BY_ID" ]]; then
+              DEVICE="$(readlink -f "$BY_ID")"
+              break
+            fi
+            for candidate in /dev/xvdf /dev/sdf /dev/nvme1n1; do
+              if [[ -b "$candidate" ]]; then
+                DEVICE="$candidate"
+                break 2
+              fi
+            done
+            sleep 5
+          done
+          if [[ -z "$DEVICE" ]]; then
+            echo "Retained EBS data volume did not appear." >&2
+            exit 1
+          fi
+
+          systemctl stop docker || true
+          FS_TYPE="$(blkid -s TYPE -o value "$DEVICE" || true)"
+          if [[ -z "$FS_TYPE" ]]; then
+            mkfs.xfs -f "$DEVICE"
+            FS_TYPE=xfs
+          fi
+          FS_UUID="$(blkid -s UUID -o value "$DEVICE")"
+          install -d -m 0711 /var/lib/docker
+          if ! grep -q "UUID=$FS_UUID " /etc/fstab; then
+            printf 'UUID=%s /var/lib/docker %s defaults,nofail 0 2\n' "$FS_UUID" "$FS_TYPE" >> /etc/fstab
+          fi
+          mount /var/lib/docker
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/${DockerComposeVersion}/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+
+          install -d -m 0755 /opt/questacase
+          git clone --depth 1 --branch '${RepositoryBranch}' '${RepositoryUrl}' /opt/questacase/kg-storage
+          cd /opt/questacase/kg-storage
+
+          IMDS_TOKEN="$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' http://169.254.169.254/latest/api/token)"
+          PUBLIC_HOSTNAME="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname)"
+          cat >.env <<'ENVIRONMENT'
+          DOCKER_PLATFORM=linux/amd64
+          NEO4J_IMAGE=${Neo4jImage}
+          NEO4J_VERSION=${Neo4jVersion}
+          NEO4J_PASSWORD=${Neo4jPassword}
+          NEO4J_BIND_ADDRESS=0.0.0.0
+          NEO4J_ADVERTISED_ADDRESS=REPLACE_PUBLIC_HOSTNAME
+          NEO4J_HTTP_PORT=7474
+          NEO4J_BOLT_PORT=7687
+          NEO4J_HEAP_INITIAL=512m
+          NEO4J_HEAP_MAX=1g
+          NEO4J_PAGECACHE=512m
+          NEO4J_MEMORY_LIMIT=2g
+          NEO4J_CPU_LIMIT=2.0
+          ENVIRONMENT
+          sed -i "s/REPLACE_PUBLIC_HOSTNAME/$PUBLIC_HOSTNAME/" .env
+          chmod 0600 .env
+
+          ./build.sh
+          ./run.sh
+
+  DataVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !GetAtt PublicSubnet.AvailabilityZone
+      Encrypted: true
+      Size: !Ref DataVolumeSize
+      VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-neo4j-data
+        - Key: Project
+          Value: QuestaCase
+
+  DataVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref StorageInstance
+      VolumeId: !Ref DataVolume
+
+Outputs:
+  InstanceId:
+    Value: !Ref StorageInstance
+  PrivateIp:
+    Value: !GetAtt StorageInstance.PrivateIp
+  PublicIp:
+    Value: !GetAtt StorageInstance.PublicIp
+    Description: Changes after a stop/start cycle because this template does not allocate an Elastic IP.
+  Neo4jBrowserUrl:
+    Value: !Sub http://${StorageInstance.PublicDnsName}:7474
+  Neo4jBoltUrl:
+    Value: !Sub bolt://${StorageInstance.PublicDnsName}:7687
+  Neo4jUsername:
+    Value: neo4j
+  DataVolumeId:
+    Value: !Ref DataVolume
+    Description: Retained EBS volume containing Docker images and Neo4j named volumes.
+  VpcId:
+    Value: !Ref Vpc
+  SecurityGroupId:
+    Value: !Ref StorageSecurityGroup
+  BootstrapLogCommand:
+    Value: !Sub aws ssm start-session --target ${StorageInstance} --region ${AWS::Region}

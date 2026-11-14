@@ -1,9 +1,13 @@
 # QuestaCase AWS infrastructure
 
-This repository contains the phase-one upload stack plus distributed Web API,
-CPU inference and GPU inference CloudFormation templates. Runtime Docker files
-live in their own application repositories, including
-`https://github.com/ScaleStackk/inference.git`.
+This repository contains all AWS provisioning for QuestaCase:
+
+- `phase1-upload-stack.yaml` provisions the upload/API demonstration stack.
+- `distributed/` contains Web API plus CPU and GPU inference stacks.
+- `storage/` contains the Neo4j and Qdrant storage stacks.
+
+Runtime Docker and Compose files remain in their respective application
+repositories and are cloned by these templates during EC2 bootstrap.
 
 ## Phase 1 upload stack
 
