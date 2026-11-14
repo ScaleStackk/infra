@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: QuestaCase CPU inference EC2 node using Qwen3 4B for Free Tier-compatible testing.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo-cpu
+  VpcCidr:
+    Type: String
+    Default: 10.50.0.0/16
+    Description: Must not overlap another QuestaCase VPC.
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.50.1.0/24
+  InferenceIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^(?:\d{1,3}\.){3}\d{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$
+    Description: CIDR allowed to call Ollama. Restrict this to the Web API public IP with /32 when possible.
+  InstanceType:
+    Type: String
+    Default: m7i-flex.large
+    AllowedValues:
+      - m7i-flex.large
+    Description: Free Tier-eligible x86 instance with 8 GiB RAM for CPU-only inference.
+  RootVolumeSize:
+    Type: Number
+    Default: 60
+    MinValue: 30
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+    Description: Standard ECS-optimized AL2023 AMI with Docker preinstalled.
+  DockerComposeVersion:
+    Type: String
+    Default: v5.6.1
+  InferenceRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/inference.git
+    Description: Public flattened inference runtime repository.
+  InferenceRepositoryBranch:
+    Type: String
+    Default: main
+  OllamaVersion:
+    Type: String
+    Default: 0.40.15
+  OllamaModel:
+    Type: String
+    Default: qwen3:4b
+    AllowedValues:
+      - qwen3:4b
+  InferenceImage:
+    Type: String
+    Default: questacase-inference:qwen3-4b
+  OllamaContextLength:
+    Type: Number
+    Default: 4096
+    MinValue: 2048
+    MaxValue: 8192
+  InferenceMemoryLimit:
+    Type: String
+    Default: 6g
+  InferenceCpuLimit:
+    Type: String
+    Default: "2.0"
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-vpc
+        - Key: Project
+          Value: QuestaCase
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-igw
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-subnet
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-routes
+
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref PublicSubnet
+
+  InferenceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public CPU Ollama API access for the controlled demo
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 11434
+          ToPort: 11434
+          CidrIp: !Ref InferenceIngressCidr
+          Description: Ollama API from the configured internet CIDR
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-sg
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: QuestaCase
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  InferenceInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: InternetRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref InferenceSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}
+        - Key: Project
+          Value: QuestaCase
+        - Key: Compute
+          Value: CPU
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          exec > >(tee /var/log/questacase-cpu-inference-bootstrap.log | logger -t questacase-cpu-inference -s 2>/dev/console) 2>&1
+
+          dnf install -y git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/${DockerComposeVersion}/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+          docker compose version
+
+          install -d -m 0755 /opt/questacase
+          git clone --depth 1 --branch '${InferenceRepositoryBranch}' '${InferenceRepositoryUrl}' /opt/questacase/inference
+          cd /opt/questacase/inference
+
+          cat >.env <<'ENVIRONMENT'
+          DOCKER_PLATFORM=linux/amd64
+          INFERENCE_IMAGE=${InferenceImage}
+          OLLAMA_VERSION=${OllamaVersion}
+          OLLAMA_MODEL=${OllamaModel}
+          INFERENCE_BIND_ADDRESS=0.0.0.0
+          INFERENCE_PORT=11434
+          INFERENCE_GPU_ENABLED=false
+          OLLAMA_CONTEXT_LENGTH=${OllamaContextLength}
+          OLLAMA_NUM_PARALLEL=1
+          OLLAMA_KEEP_ALIVE=24h
+          INFERENCE_MEMORY_LIMIT=${InferenceMemoryLimit}
+          INFERENCE_CPU_LIMIT=${InferenceCpuLimit}
+          ENVIRONMENT
+          chmod 0600 .env
+
+          ./build.sh inference
+          ./run-inference.sh
+
+Outputs:
+  InstanceId:
+    Value: !Ref InferenceInstance
+  PrivateIp:
+    Value: !GetAtt InferenceInstance.PrivateIp
+  PublicIp:
+    Value: !GetAtt InferenceInstance.PublicIp
+    Description: Automatically assigned public IP; it can change after a stop/start cycle.
+  PublicDnsName:
+    Value: !GetAtt InferenceInstance.PublicDnsName
+    Description: Automatically assigned public DNS name; it can change after a stop/start cycle.
+  PublicInferenceEndpoint:
+    Value: !Sub http://${InferenceInstance.PublicDnsName}:11434
+    Description: Public unauthenticated CPU Ollama endpoint for controlled testing only.
+  VpcId:
+    Value: !Ref Vpc
+  VpcCidr:
+    Value: !Ref VpcCidr
+  RouteTableId:
+    Value: !Ref RouteTable
+  SecurityGroupId:
+    Value: !Ref InferenceSecurityGroup
+  BootstrapLogCommand:
+    Value: !Sub aws ssm start-session --target ${InferenceInstance} --region ${AWS::Region}

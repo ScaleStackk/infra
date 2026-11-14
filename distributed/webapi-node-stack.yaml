@@ -1,0 +1,317 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: QuestaCase Web API EC2 node with an HAProxy inference load balancer.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+  VpcCidr:
+    Type: String
+    Default: 10.10.0.0/16
+    Description: Must not overlap any participant inference VPC.
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.10.1.0/24
+  InstanceType:
+    Type: String
+    Default: t3.medium
+  RootVolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  DockerComposeVersion:
+    Type: String
+    Default: v5.6.1
+  ApiIngressCidr:
+    Type: String
+    Default: 10.10.0.0/16
+    Description: CIDR allowed to reach port 8080. Use an HTTPS proxy for public access.
+  WebApiRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/webapi.git
+  WebApiRepositoryBranch:
+    Type: String
+    Default: main
+  InferenceRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/inference.git
+    Description: Public flattened inference runtime repository containing HAProxy.
+  InferenceRepositoryBranch:
+    Type: String
+    Default: main
+  JudgmentBucketName:
+    Type: String
+  KafkaBrokers:
+    Type: String
+    Description: Comma-separated private Kafka host:port endpoints.
+  InferenceNodes:
+    Type: String
+    Description: Comma-separated peered private inference endpoints, including port 11434.
+  AllowedOrigins:
+    Type: String
+    Default: https://questacase.web.app,https://questacase.firebaseapp.com,http://localhost:3000
+  EmbeddingApiUrl:
+    Type: String
+    Default: ""
+  EmbeddingApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+  QdrantUrl:
+    Type: String
+    Default: ""
+  QdrantApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+  Neo4jUrl:
+    Type: String
+    Default: ""
+  Neo4jPassword:
+    Type: String
+    Default: ""
+    NoEcho: true
+  InferenceModel:
+    Type: String
+    Default: qwen3:4b
+  LoadBalancerImage:
+    Type: String
+    Default: questacase-inference-lb:3.4.7
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi-vpc
+        - Key: Project
+          Value: QuestaCase
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi-igw
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi-subnet
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi-routes
+
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref PublicSubnet
+
+  WebApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Controlled access to the QuestaCase Web API
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref ApiIngressCidr
+          Description: Web API; place HTTPS in front before public exposure
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi-sg
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: JudgmentObjectAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${JudgmentBucketName}/judgments/*
+      Tags:
+        - Key: Project
+          Value: QuestaCase
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  WebApiInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: InternetRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref WebApiSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub questacase-${EnvironmentName}-webapi
+        - Key: Project
+          Value: QuestaCase
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          exec > >(tee /var/log/questacase-webapi-bootstrap.log | logger -t questacase-webapi -s 2>/dev/console) 2>&1
+
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/${DockerComposeVersion}/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+          docker compose version
+
+          install -d -m 0755 /opt/questacase
+          git clone --depth 1 --branch '${WebApiRepositoryBranch}' '${WebApiRepositoryUrl}' /opt/questacase/webapi
+          git clone --depth 1 --branch '${InferenceRepositoryBranch}' '${InferenceRepositoryUrl}' /opt/questacase/inference
+
+          cd /opt/questacase/inference
+          cat >.env <<'LOAD_BALANCER_ENVIRONMENT'
+          DOCKER_PLATFORM=linux/amd64
+          LOAD_BALANCER_IMAGE=${LoadBalancerImage}
+          INFERENCE_NODES=${InferenceNodes}
+          INFERENCE_MAX_CONNECTIONS=1
+          LOAD_BALANCER_BIND_ADDRESS=127.0.0.1
+          LOAD_BALANCER_PORT=11435
+          DOCKER_NETWORK=questacase
+          LOAD_BALANCER_MEMORY_LIMIT=256m
+          LOAD_BALANCER_CPU_LIMIT=0.5
+          LOAD_BALANCER_ENVIRONMENT
+          chmod 0600 .env
+          ./build.sh load-balancer
+          ./run-load-balancer.sh
+
+          cd /opt/questacase/webapi
+          cat >.env <<'WEBAPI_ENVIRONMENT'
+          DOCKER_PLATFORM=linux/amd64
+          DOCKER_NETWORK=questacase
+          WEBAPI_IMAGE=questacase-webapi:latest
+          API_BIND_ADDRESS=0.0.0.0
+          API_PORT=8080
+          API_BASE_PATH=api/v1
+          API_ALLOWED_ORIGINS=${AllowedOrigins}
+          AWS_REGION=${AWS::Region}
+          S3_BUCKET=${JudgmentBucketName}
+          S3_PREFIX=judgments
+          S3_PRESIGN_SECONDS=300
+          S3_SERVER_SIDE_ENCRYPTION=AES256
+          MAX_PDF_BYTES=52428800
+          KAFKA_BROKERS=${KafkaBrokers}
+          KAFKA_CLIENT_ID=questacase-webapi
+          KAFKA_UPLOAD_TOPIC=judgment.uploaded
+          KAFKA_SSL=false
+          EMBEDDING_API_URL=${EmbeddingApiUrl}
+          EMBEDDING_API_KEY=${EmbeddingApiKey}
+          EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+          QDRANT_URL=${QdrantUrl}
+          QDRANT_API_KEY=${QdrantApiKey}
+          QDRANT_COLLECTION=judgment_chunks
+          NEO4J_URL=${Neo4jUrl}
+          NEO4J_USERNAME=neo4j
+          NEO4J_PASSWORD=${Neo4jPassword}
+          NEO4J_DATABASE=neo4j
+          NEO4J_REQUIRED=false
+          INFERENCE_API_URL=http://inference:11434
+          INFERENCE_MODEL=${InferenceModel}
+          MAX_CONTEXT_CHARACTERS=24000
+          REQUEST_TIMEOUT_MS=15000
+          WEBAPI_MEMORY_LIMIT=512m
+          WEBAPI_CPU_LIMIT=1.0
+          WEBAPI_ENVIRONMENT
+          chmod 0600 .env
+          ./build.sh
+          ./run.sh
+
+Outputs:
+  InstanceId:
+    Value: !Ref WebApiInstance
+  PrivateIp:
+    Value: !GetAtt WebApiInstance.PrivateIp
+  PublicIp:
+    Value: !GetAtt WebApiInstance.PublicIp
+  VpcId:
+    Value: !Ref Vpc
+  VpcCidr:
+    Value: !Ref VpcCidr
+  RouteTableId:
+    Value: !Ref RouteTable
+  SecurityGroupId:
+    Value: !Ref WebApiSecurityGroup
+  InternalApiUrl:
+    Value: !Sub http://${WebApiInstance.PrivateIp}:8080/api/v1
+  SessionCommand:
+    Value: !Sub aws ssm start-session --target ${WebApiInstance} --region ${AWS::Region}

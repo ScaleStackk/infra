@@ -1,0 +1,564 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  QuestaCase phase 1 upload infrastructure: a private judgment bucket and one
+  EC2 host for the Web API and single-node Kafka demo broker.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+    Description: Short environment label used in resource tags.
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: >-
+      t3.medium is recommended for the Web API and Kafka containers together.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Current Amazon Linux 2023 x86-64 AMI from the AWS public SSM parameter.
+
+  JudgmentBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Leave empty to let CloudFormation create a globally unique name.
+
+  FirebaseOrigin:
+    Type: String
+    Default: https://questacase.web.app
+    AllowedPattern: "^https://[A-Za-z0-9.-]+$"
+    Description: Primary Firebase Hosting origin allowed by S3 and the Web API.
+
+  FirebaseAuthOrigin:
+    Type: String
+    Default: https://questacase.firebaseapp.com
+    AllowedPattern: "^https://[A-Za-z0-9.-]+$"
+    Description: Secondary Firebase origin allowed by S3 and the Web API.
+
+  ApiDomainName:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'
+    Description: >-
+      Optional API DNS name, for example api.example.com. When supplied with a
+      Route 53 hosted zone, the stack creates DNS and starts Caddy HTTPS.
+
+  Route53HostedZoneId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^Z[A-Z0-9]+$"
+    Description: Route 53 public hosted-zone ID for ApiDomainName; omit with ApiDomainName.
+
+  WebApiRepositoryUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
+    Description: >-
+      Public GitHub repository containing the contents of local_llm/webapi at
+      its root. Leave empty to provision infrastructure without deploying code.
+
+  WebApiRepositoryBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+  KafkaRepositoryUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
+    Description: >-
+      Public GitHub repository containing the contents of local_llm/msg_queue at
+      its root. Leave empty to provision infrastructure without deploying code.
+
+  KafkaRepositoryBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+Rules:
+  DomainParametersMustBePaired:
+    Assertions:
+      - Assert:
+          Fn::Or:
+            - Fn::And:
+                - Fn::Equals:
+                    - Ref: ApiDomainName
+                    - ""
+                - Fn::Equals:
+                    - Ref: Route53HostedZoneId
+                    - ""
+            - Fn::And:
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: ApiDomainName
+                        - ""
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: Route53HostedZoneId
+                        - ""
+        AssertDescription: Supply both ApiDomainName and Route53HostedZoneId, or leave both empty.
+
+  SourceRepositoriesMustBePaired:
+    Assertions:
+      - Assert:
+          Fn::Or:
+            - Fn::And:
+                - Fn::Equals:
+                    - Ref: WebApiRepositoryUrl
+                    - ""
+                - Fn::Equals:
+                    - Ref: KafkaRepositoryUrl
+                    - ""
+            - Fn::And:
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: WebApiRepositoryUrl
+                        - ""
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: KafkaRepositoryUrl
+                        - ""
+        AssertDescription: Supply both public repository URLs, or leave both empty.
+
+Conditions:
+  HasCustomBucketName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: JudgmentBucketName
+          - ""
+  HasApiDomain:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ApiDomainName
+          - ""
+  HasApplicationSources:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: WebApiRepositoryUrl
+          - ""
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: InternetGateway
+      VpcId:
+        Ref: Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      CidrBlock: 10.42.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: Vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-public-a
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-public
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+      RouteTableId:
+        Ref: PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet
+
+  JudgmentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::If:
+          - HasCustomBucketName
+          - Ref: JudgmentBucketName
+          - Ref: AWS::NoValue
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+            AllowedOrigins:
+              - Ref: FirebaseOrigin
+              - Ref: FirebaseAuthOrigin
+              - http://localhost:3000
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-judgments
+
+  JudgmentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: JudgmentBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - JudgmentBucket
+                  - Arn
+              - Fn::Sub: ${JudgmentBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  WebHostRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: JudgmentObjectAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadAndUploadJudgments
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: ${JudgmentBucket.Arn}/judgments/*
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-web-role
+
+  WebHostInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: WebHostRole
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS entry point for QuestaCase Web API
+      SecurityGroupIngress:
+        - Description: HTTP for Caddy certificate issuance and redirect
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: HTTPS API access
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: Vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-web-sg
+
+  WebHost:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId:
+        Ref: LatestAmiId
+      InstanceType:
+        Ref: InstanceType
+      IamInstanceProfile:
+        Ref: WebHostInstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 2
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - Ref: WebSecurityGroup
+          SubnetId:
+            Ref: PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 30
+            VolumeType: gp3
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/usr/bin/env bash
+            set -Eeuo pipefail
+            exec > >(tee /var/log/questacase-bootstrap.log | logger -t questacase-bootstrap -s 2>/dev/console) 2>&1
+
+            dnf install -y docker git
+            systemctl enable --now docker
+
+            install -d -m 0755 /opt/questacase
+            docker network inspect questacase >/dev/null 2>&1 || docker network create questacase
+
+            cat > /opt/questacase/webapi.env <<'ENVFILE'
+            PORT=8080
+            API_BASE_PATH=api/v1
+            API_ALLOWED_ORIGINS=${FirebaseOrigin},${FirebaseAuthOrigin},http://localhost:3000
+            AWS_REGION=${AWS::Region}
+            S3_BUCKET=${JudgmentBucket}
+            S3_PREFIX=judgments
+            S3_PRESIGN_SECONDS=300
+            S3_SERVER_SIDE_ENCRYPTION=AES256
+            S3_KMS_KEY_ID=
+            S3_ENDPOINT=
+            S3_FORCE_PATH_STYLE=false
+            MAX_PDF_BYTES=52428800
+            KAFKA_BROKERS=kafka:19092
+            KAFKA_CLIENT_ID=questacase-webapi
+            KAFKA_UPLOAD_TOPIC=judgment.uploaded
+            KAFKA_SSL=false
+            KAFKA_SASL_MECHANISM=
+            KAFKA_SASL_USERNAME=
+            KAFKA_SASL_PASSWORD=
+            EMBEDDING_API_URL=
+            QDRANT_URL=http://qdrant:6333
+            NEO4J_REQUIRED=false
+            INFERENCE_API_URL=http://inference:11434
+            ENVFILE
+            chmod 0600 /opt/questacase/webapi.env
+
+            if [ -n '${WebApiRepositoryUrl}' ] && [ -n '${KafkaRepositoryUrl}' ]; then
+              git clone --depth 1 --branch '${KafkaRepositoryBranch}' '${KafkaRepositoryUrl}' /opt/questacase/kafka
+              git clone --depth 1 --branch '${WebApiRepositoryBranch}' '${WebApiRepositoryUrl}' /opt/questacase/webapi
+
+              docker build --tag legal-kafka:4.4.0-native /opt/questacase/kafka
+              docker volume inspect questacase-kafka-data >/dev/null 2>&1 || docker volume create questacase-kafka-data
+              docker run --detach \
+                --name legal-kafka \
+                --hostname kafka \
+                --restart unless-stopped \
+                --network questacase \
+                --network-alias kafka \
+                --env CLUSTER_ID=4L6g3nShT-eMCtK--X86sw \
+                --env KAFKA_NODE_ID=1 \
+                --env KAFKA_PROCESS_ROLES=broker,controller \
+                --env KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093 \
+                --env KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+                --env KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT \
+                --env KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:19092 \
+                --env KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:19092 \
+                --env KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL \
+                --env KAFKA_LOG_DIRS=/var/lib/kafka/data \
+                --env KAFKA_AUTO_CREATE_TOPICS_ENABLE=false \
+                --env KAFKA_NUM_PARTITIONS=8 \
+                --env KAFKA_DEFAULT_REPLICATION_FACTOR=1 \
+                --env KAFKA_MIN_INSYNC_REPLICAS=1 \
+                --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+                --env KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+                --env KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+                --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR=1 \
+                --env KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR=1 \
+                --env KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+                --env KAFKA_LOG_RETENTION_HOURS=168 \
+                --env KAFKA_LOG_SEGMENT_BYTES=268435456 \
+                --volume questacase-kafka-data:/var/lib/kafka/data \
+                legal-kafka:4.4.0-native
+
+              docker build --tag questacase-webapi:latest /opt/questacase/webapi
+              docker run --detach \
+                --name questacase-webapi \
+                --restart unless-stopped \
+                --network questacase \
+                --publish 127.0.0.1:8080:8080 \
+                --env-file /opt/questacase/webapi.env \
+                questacase-webapi:latest
+            fi
+
+            if [ -n '${ApiDomainName}' ]; then
+              cat > /opt/questacase/Caddyfile <<'CADDYFILE'
+            ${ApiDomainName} {
+              encode zstd gzip
+              reverse_proxy 127.0.0.1:8080
+            }
+            CADDYFILE
+              docker run --detach \
+                --name questacase-edge \
+                --restart unless-stopped \
+                --network host \
+                --volume /opt/questacase/Caddyfile:/etc/caddy/Caddyfile:ro \
+                --volume questacase-caddy-data:/data \
+                --volume questacase-caddy-config:/config \
+                caddy:2-alpine
+            fi
+
+            cat > /opt/questacase/DEPLOYMENT.txt <<'INFO'
+            QuestaCase infrastructure bootstrap completed.
+            Logs: /var/log/questacase-bootstrap.log
+            Runtime environment: /opt/questacase/webapi.env
+            Use AWS Systems Manager Session Manager for shell access.
+            INFO
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-web-messaging
+
+  WebHostElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-web-eip
+
+  WebHostElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - WebHostElasticIp
+          - AllocationId
+      InstanceId:
+        Ref: WebHost
+
+  ApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasApiDomain
+    DependsOn: WebHostElasticIpAssociation
+    Properties:
+      HostedZoneId:
+        Ref: Route53HostedZoneId
+      Name:
+        Ref: ApiDomainName
+      ResourceRecords:
+        - Ref: WebHostElasticIp
+      TTL: "60"
+      Type: A
+
+Outputs:
+  JudgmentBucketName:
+    Description: Private S3 bucket used for judgment PDFs.
+    Value:
+      Ref: JudgmentBucket
+
+  WebHostInstanceId:
+    Description: EC2 instance running the demo Web API and Kafka containers.
+    Value:
+      Ref: WebHost
+
+  WebHostPublicIp:
+    Description: Elastic IP assigned to the Web/API host.
+    Value:
+      Ref: WebHostElasticIp
+
+  ApiBaseUrl:
+    Description: Set this value as NEXT_PUBLIC_BACKEND_URL when a domain was supplied.
+    Value:
+      Fn::If:
+        - HasApiDomain
+        - Fn::Sub: https://${ApiDomainName}/api/v1
+        - Configure ApiDomainName and Route53HostedZoneId to enable HTTPS
+
+  SessionManagerCommand:
+    Description: CLI command for shell access without opening SSH.
+    Value:
+      Fn::Sub: aws ssm start-session --target ${WebHost} --region ${AWS::Region}
+
+  ApplicationDeployment:
+    Description: Whether repository URLs were supplied for automatic container deployment.
+    Value:
+      Fn::If:
+        - HasApplicationSources
+        - Web API and Kafka deployment requested; check bootstrap logs on the instance
+        - Infrastructure only; repository URLs were not supplied

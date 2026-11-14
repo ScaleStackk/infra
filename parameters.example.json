@@ -1,0 +1,46 @@
+[
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "demo"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.medium"
+  },
+  {
+    "ParameterKey": "JudgmentBucketName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "FirebaseOrigin",
+    "ParameterValue": "https://questacase.web.app"
+  },
+  {
+    "ParameterKey": "FirebaseAuthOrigin",
+    "ParameterValue": "https://questacase.firebaseapp.com"
+  },
+  {
+    "ParameterKey": "ApiDomainName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Route53HostedZoneId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "WebApiRepositoryUrl",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "WebApiRepositoryBranch",
+    "ParameterValue": "main"
+  },
+  {
+    "ParameterKey": "KafkaRepositoryUrl",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "KafkaRepositoryBranch",
+    "ParameterValue": "main"
+  }
+]

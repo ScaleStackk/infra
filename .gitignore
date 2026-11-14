@@ -1,0 +1,14 @@
+.DS_Store
+**/.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+*.tar
+*.pem
+*.key
+*.crt
+.aws-sam/
+.terraform/
+*.tfstate
+*.tfstate.*
