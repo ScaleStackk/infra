@@ -3,6 +3,8 @@
 This repository contains all AWS provisioning for QuestaCase:
 
 - `phase1-upload-stack.yaml` provisions the upload/API demonstration stack.
+- `application/application-node-stack.yaml` provisions the combined Web API,
+  Kafka, and inference load-balancer node.
 - `distributed/` contains Web API plus CPU and GPU inference stacks.
 - `storage/` contains the Neo4j and Qdrant storage stacks.
 
@@ -23,6 +25,30 @@ This CloudFormation stack creates the upload path needed by the Firebase UI:
 - An Elastic IP and optional Route 53 record/Caddy HTTPS endpoint.
 - Optional automatic Docker builds of the Web API and Kafka from public GitHub
   repositories.
+
+## Combined application node
+
+`application/application-node-stack.yaml` creates one EC2 instance and starts
+three separate containers on it:
+
+- `questacase-webapi`, exposed on port 8080;
+- `legal-kafka`, exposed on port 9092 only to `KafkaIngressCidr` and advertised
+  to workers through the stack's Elastic IP;
+- `questacase-inference-lb`, available only to Web API as
+  `http://inference:11434` on the shared Docker network.
+
+The template accepts the comma-separated inference nodes and the Neo4j,
+Qdrant, and embedding API endpoints as parameters. It also creates the private
+judgment S3 bucket and gives the EC2 role access only to its `judgments/`
+prefix. Upload this single YAML file in CloudFormation after the external
+service endpoints are known. Use an exact worker public-IP CIDR such as
+`203.0.113.10/32` for Kafka; never expose the plaintext demo broker to the
+whole internet.
+
+If `ApiDomainName` and `Route53HostedZoneId` are supplied, Caddy is started as
+an additional TLS edge container. Without a domain, the output is an HTTP URL,
+which is useful for direct testing but cannot be called from an HTTPS Firebase
+page because browsers block mixed content.
 
 This is deliberately the phase 1 compute layout: the Web API and Kafka run as
 separate containers on one EC2 instance. Neo4j, Qdrant, extraction workers and
