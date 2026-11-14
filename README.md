@@ -45,6 +45,10 @@ service endpoints are known. Use an exact worker public-IP CIDR such as
 `203.0.113.10/32` for Kafka; never expose the plaintext demo broker to the
 whole internet.
 
+The checked-in application template currently defaults to the deployed
+Neo4j, Qdrant, and Qwen inference hostnames. Storage credentials are still
+required stack parameters and are never inferred from the public endpoints.
+
 If `ApiDomainName` and `Route53HostedZoneId` are supplied, Caddy is started as
 an additional TLS edge container. Without a domain, the output is an HTTP URL,
 which is useful for direct testing but cannot be called from an HTTPS Firebase
