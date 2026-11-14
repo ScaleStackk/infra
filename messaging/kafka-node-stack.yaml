@@ -35,10 +35,11 @@ Parameters:
 
   PrimaryClientCidr:
     Type: String
+    Default: 127.0.0.1/32
     AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
     Description: >-
-      Required client CIDR allowed to use Kafka, preferably a Web API or worker
-      Elastic IP followed by /32.
+      Client CIDR allowed to use Kafka. The closed default permits no external
+      client; replace it with a Web API or worker public IP followed by /32.
 
   SecondaryClientCidr:
     Type: String
