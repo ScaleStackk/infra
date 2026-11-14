@@ -12,5 +12,10 @@ build the corresponding Docker image and start it with Docker Compose. Their
 default `PublicIngressCidr` is `0.0.0.0/0` for the short-lived POC. Restrict it
 to trusted `/32` addresses whenever possible.
 
+The Neo4j template includes a visible demo-only default password so the stack
+can be created without entering one. Override `Neo4jPassword` for every shared
+or longer-lived deployment. Never combine the published default password with
+unrestricted public ingress outside a supervised demonstration.
+
 The data volumes use `DeletionPolicy: Retain`; deleting a stack does not delete
 its data volume or stop its EBS storage charges.

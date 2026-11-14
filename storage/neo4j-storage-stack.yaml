@@ -42,6 +42,7 @@ Parameters:
   Neo4jPassword:
     Type: String
     NoEcho: true
+    Default: QuestaCaseNeo4jDemo-2026
     MinLength: 12
     MaxLength: 128
     AllowedPattern: ^[A-Za-z0-9._~!@#%^*+=-]+$
