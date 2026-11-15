@@ -132,7 +132,7 @@ Parameters:
 
   QdrantUrl:
     Type: String
-    Default: http://ec2-13-51-173-83.eu-north-1.compute.amazonaws.com:6333
+    Default: http://ec2-16-113-78-201.ap-south-2.compute.amazonaws.com:6333
     AllowedPattern: '^https?://[^\s]+$'
     Description: Qdrant REST base URL, normally ending in port 6333.
 
@@ -146,7 +146,7 @@ Parameters:
 
   Neo4jUrl:
     Type: String
-    Default: http://ec2-13-53-119-30.eu-north-1.compute.amazonaws.com:7474
+    Default: http://ec2-16-112-8-114.ap-south-2.compute.amazonaws.com:7474
     AllowedPattern: '^https?://[^\s]+$'
     Description: Neo4j HTTP base URL, normally ending in port 7474.
 
