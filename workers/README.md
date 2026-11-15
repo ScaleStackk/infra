@@ -1,6 +1,6 @@
 # QuestaCase worker nodes
 
-`worker-nodes-stack.yaml` creates two public EC2 instances in Hyderabad:
+`worker-nodes-stack.yaml` creates two public EC2 instances in Mumbai by default:
 
 - a Free Tier-eligible `t3.small` KG worker that calls the remote Qwen inference
   API and writes validated graphs to Neo4j;
@@ -9,8 +9,10 @@
 
 Both instances consume `judgment.uploaded` independently using different Kafka
 consumer groups and download PDFs from the private `questacase` bucket through
-their EC2 IAM role. They need no inbound SSH; use Systems Manager Session
-Manager. Only the Web API Elastic IP can reach the embedding API.
+their EC2 IAM role. `JudgmentBucketRegion` remains `ap-south-2`, so the Mumbai
+workers address the Hyderabad S3 bucket correctly. They need no inbound SSH;
+use Systems Manager Session Manager. Only the Web API Elastic IP can reach the
+embedding API.
 
 Before deploying, push the current `kg_worker` and `embed_worker` commits to
 their public GitHub repositories because the EC2 bootstrap clones `main`.

@@ -11,7 +11,7 @@ Parameters:
 
   AvailabilityZone:
     Type: String
-    Default: ap-south-2b
+    Default: ap-south-1a
     AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+[a-z]$"
 
   KgWorkerInstanceType:
@@ -48,6 +48,12 @@ Parameters:
     Type: String
     Default: questacase
     AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+
+  JudgmentBucketRegion:
+    Type: String
+    Default: ap-south-2
+    AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+$"
+    Description: Region containing the judgment S3 bucket.
 
   JudgmentPrefix:
     Type: String
@@ -287,7 +293,7 @@ Resources:
             docker build --tag legal-kg-worker:latest /opt/questacase/kg_worker
 
             cat > /opt/questacase/kg-worker.env <<'ENVFILE'
-            AWS_REGION=${AWS::Region}
+            AWS_REGION=${JudgmentBucketRegion}
             KAFKA_BROKERS=${KafkaBrokers}
             KAFKA_UPLOAD_TOPIC=judgment.uploaded
             KAFKA_CONSUMER_GROUP=questacase-kg-workers
@@ -366,7 +372,7 @@ Resources:
             docker build --tag legal-embedding-worker:latest /opt/questacase/embed_worker
 
             cat > /opt/questacase/embedding-worker.env <<'ENVFILE'
-            AWS_REGION=${AWS::Region}
+            AWS_REGION=${JudgmentBucketRegion}
             KAFKA_BROKERS=${KafkaBrokers}
             KAFKA_UPLOAD_TOPIC=judgment.uploaded
             KAFKA_CONSUMER_GROUP=questacase-embedding-workers
