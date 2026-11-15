@@ -57,6 +57,7 @@ Parameters:
 
   KafkaBrokers:
     Type: String
+    Default: 13.234.216.17:9092
     AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
     Description: >-
       KafkaBroker output from messaging/kafka-node-stack.yaml, normally an EC2
