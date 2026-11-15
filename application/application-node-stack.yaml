@@ -37,13 +37,7 @@ Parameters:
     Type: String
     Default: questacass
     AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
-    Description: Existing S3 bucket used for judgment PDFs; it is not created by this stack.
-
-  JudgmentBucketRegion:
-    Type: String
-    Default: ap-south-2
-    AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+$"
-    Description: AWS region containing the judgment bucket.
+    Description: Globally unique S3 bucket created by this stack for judgment PDFs.
 
   JudgmentPrefix:
     Type: String
@@ -253,6 +247,72 @@ Resources:
       SubnetId:
         Ref: PublicSubnet
 
+  JudgmentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Ref: JudgmentBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+            AllowedOrigins:
+              - Ref: FirebaseOrigin
+              - Ref: FirebaseAuthOrigin
+              - http://localhost:3000
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-judgments
+
+  JudgmentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: JudgmentBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - JudgmentBucket
+                  - Arn
+              - Fn::Sub: ${JudgmentBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
   ApplicationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -277,7 +337,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:s3:::${JudgmentBucketName}/${JudgmentPrefix}/*
+                  Fn::Sub: ${JudgmentBucket.Arn}/${JudgmentPrefix}/*
 
   ApplicationInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -402,8 +462,8 @@ Resources:
             PORT=8080
             API_BASE_PATH=api/v1
             API_ALLOWED_ORIGINS=${FirebaseOrigin},${FirebaseAuthOrigin},http://localhost:3000
-            AWS_REGION=${JudgmentBucketRegion}
-            S3_BUCKET=${JudgmentBucketName}
+            AWS_REGION=${AWS::Region}
+            S3_BUCKET=${JudgmentBucket}
             S3_PREFIX=${JudgmentPrefix}
             S3_PRESIGN_SECONDS=300
             S3_SERVER_SIDE_ENCRYPTION=AES256
@@ -525,7 +585,7 @@ Outputs:
   JudgmentBucket:
     Description: Private S3 bucket used for judgment PDFs.
     Value:
-      Ref: JudgmentBucketName
+      Ref: JudgmentBucket
 
   SessionManagerCommand:
     Description: Shell access without opening SSH.

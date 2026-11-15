@@ -37,10 +37,11 @@ two containers on it:
   `http://inference:11434` on the shared Docker network.
 
 The template accepts the comma-separated inference nodes and the Neo4j,
-Qdrant, and embedding API endpoints as parameters. It reuses the existing S3
-bucket named by `JudgmentBucketName` and gives the EC2 role object access only
-under `JudgmentPrefix`. Supply the `KafkaBroker` output from the messaging stack
-as the application stack's `KafkaBrokers` parameter.
+Qdrant, and embedding API endpoints as parameters. It creates the private S3
+bucket named by `JudgmentBucketName`, configures Firebase upload CORS, and gives
+the EC2 role object access only under `JudgmentPrefix`. Supply the `KafkaBroker`
+output from the messaging stack as the application stack's `KafkaBrokers`
+parameter.
 
 The checked-in application template currently defaults to the deployed
 Neo4j, Qdrant, and Qwen inference hostnames. Storage credentials are still
