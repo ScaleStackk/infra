@@ -35,9 +35,21 @@ Parameters:
 
   JudgmentBucketName:
     Type: String
-    Default: ""
-    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
-    Description: Leave empty to let CloudFormation create a globally unique name.
+    Default: questacass
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Existing S3 bucket used for judgment PDFs; it is not created by this stack.
+
+  JudgmentBucketRegion:
+    Type: String
+    Default: ap-south-2
+    AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+$"
+    Description: AWS region containing the judgment bucket.
+
+  JudgmentPrefix:
+    Type: String
+    Default: docs
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9/_-]{0,127}$"
+    Description: S3 key prefix under which judgment PDFs are stored.
 
   FirebaseOrigin:
     Type: String
@@ -174,9 +186,6 @@ Rules:
         AssertDescription: Supply both domain parameters, or leave both empty.
 
 Conditions:
-  HasCustomBucketName:
-    Fn::Not:
-      - Fn::Equals: [Ref: JudgmentBucketName, ""]
   HasApiDomain:
     Fn::Not:
       - Fn::Equals: [Ref: ApiDomainName, ""]
@@ -244,66 +253,6 @@ Resources:
       SubnetId:
         Ref: PublicSubnet
 
-  JudgmentBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      BucketName:
-        Fn::If:
-          - HasCustomBucketName
-          - Ref: JudgmentBucketName
-          - Ref: AWS::NoValue
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders: ["*"]
-            AllowedMethods: [PUT]
-            AllowedOrigins:
-              - Ref: FirebaseOrigin
-              - Ref: FirebaseAuthOrigin
-              - http://localhost:3000
-            ExposedHeaders: [ETag]
-            MaxAge: 3600
-      LifecycleConfiguration:
-        Rules:
-          - Id: AbortIncompleteMultipartUploads
-            Status: Enabled
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 1
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-
-  JudgmentBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket:
-        Ref: JudgmentBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: DenyInsecureTransport
-            Effect: Deny
-            Principal: "*"
-            Action: s3:*
-            Resource:
-              - Fn::GetAtt: [JudgmentBucket, Arn]
-              - Fn::Sub: ${JudgmentBucket.Arn}/*
-            Condition:
-              Bool:
-                aws:SecureTransport: false
-
   ApplicationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -328,7 +277,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  Fn::Sub: ${JudgmentBucket.Arn}/judgments/*
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${JudgmentBucketName}/${JudgmentPrefix}/*
 
   ApplicationInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -453,9 +402,9 @@ Resources:
             PORT=8080
             API_BASE_PATH=api/v1
             API_ALLOWED_ORIGINS=${FirebaseOrigin},${FirebaseAuthOrigin},http://localhost:3000
-            AWS_REGION=${AWS::Region}
-            S3_BUCKET=${JudgmentBucket}
-            S3_PREFIX=judgments
+            AWS_REGION=${JudgmentBucketRegion}
+            S3_BUCKET=${JudgmentBucketName}
+            S3_PREFIX=${JudgmentPrefix}
             S3_PRESIGN_SECONDS=300
             S3_SERVER_SIDE_ENCRYPTION=AES256
             S3_KMS_KEY_ID=
@@ -576,7 +525,7 @@ Outputs:
   JudgmentBucket:
     Description: Private S3 bucket used for judgment PDFs.
     Value:
-      Ref: JudgmentBucket
+      Ref: JudgmentBucketName
 
   SessionManagerCommand:
     Description: Shell access without opening SSH.
