@@ -12,7 +12,8 @@ build the corresponding Docker image and start it with Docker Compose. Their
 default `PublicIngressCidr` is `0.0.0.0/0` for the short-lived POC. Restrict it
 to trusted `/32` addresses whenever possible.
 
-The Hyderabad defaults use `t3.medium` in `ap-south-2b`. If that zone reports
+The Hyderabad defaults use the Free Tier-eligible `t3.small` in
+`ap-south-2b`, with reduced container memory limits suitable for the POC. If that zone reports
 insufficient capacity, select `ap-south-2c` through the `AvailabilityZone`
 parameter without changing the template.
 
