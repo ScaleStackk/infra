@@ -5,6 +5,10 @@ This repository contains all AWS provisioning for QuestaCase:
 - `phase1-upload-stack.yaml` provisions the upload/API demonstration stack.
 - `application/application-node-stack.yaml` provisions the Web API and
   inference load-balancer node.
+- `application/cloudfront-webapi-stack.yaml` adds a generated HTTPS CloudFront
+  endpoint in front of the existing Web API EC2 instance.
+- `application/direct-https-edge-stack.yaml` is the no-CloudFront fallback. It
+  opens ports 80/443 and starts Caddy on the existing application instance.
 - `messaging/kafka-node-stack.yaml` provisions the dedicated Kafka node.
 - `workers/worker-nodes-stack.yaml` provisions the KG and embedding workers.
 - `distributed/` contains Web API plus CPU and GPU inference stacks.
@@ -55,6 +59,46 @@ page because browsers block mixed content.
 
 Neo4j, Qdrant, Kafka, extraction workers and inference nodes are not created by
 the application stack.
+
+## CloudFront HTTPS edge
+
+`application/cloudfront-webapi-stack.yaml` is a small, separate stack for the
+already-running application node. It does not replace, restart, or modify the
+EC2 instance. It creates a CloudFront distribution using the EC2 public DNS
+hostname as a custom HTTP origin on port 8080. API caching is disabled, all API
+methods are accepted, and viewer headers, cookies, and query strings are
+forwarded to the origin.
+
+Upload the template in the CloudFormation console. `OriginDomainName` must be
+the EC2 public DNS hostname without a scheme, port, or path. After the stack and
+CloudFront distribution finish deploying, copy the `HttpsApiBaseUrl` output and
+use it as `NEXT_PUBLIC_BACKEND_URL` when building the Firebase frontend.
+
+The default value currently targets the deployed application Elastic IP's EC2
+DNS hostname:
+
+```text
+ec2-16-112-144-126.ap-south-2.compute.amazonaws.com
+```
+
+Test the `HealthCheckUrl` output before rebuilding the frontend. The existing
+application security group must continue to allow CloudFront to reach TCP 8080.
+For this POC it currently allows public access; a production deployment should
+restrict origin access and add authentication and rate limiting.
+
+If AWS has not yet verified the account for CloudFront, use
+`application/direct-https-edge-stack.yaml`. Supply the application instance ID
+and its security-group ID. The template defaults to the free testing hostname
+`16-112-144-126.sslip.io`, opens ports 80 and 443, and runs Caddy through an SSM
+State Manager association. Caddy obtains and renews the public certificate and
+proxies HTTPS requests to the Web API on `127.0.0.1:8080`.
+
+The `sslip.io` hostname is appropriate for this short-lived POC but is a shared
+public DNS service. Certificate issuance can occasionally be delayed by shared
+certificate-authority rate limits. Use a domain you control for a durable or
+production deployment. Deleting this auxiliary stack removes its ingress rules
+and association, but it does not stop the already-created Caddy container; stop
+that container separately before deleting the stack if it is no longer needed.
 
 ## Dedicated Kafka node
 

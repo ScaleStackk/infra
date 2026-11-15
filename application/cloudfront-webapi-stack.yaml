@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  QuestaCase HTTPS edge for the existing Web API. CloudFront terminates TLS and
+  forwards uncached API requests to the EC2 origin over HTTP.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+    Description: Short environment label used in resource names.
+
+  OriginDomainName:
+    Type: String
+    Default: ec2-16-112-144-126.ap-south-2.compute.amazonaws.com
+    AllowedPattern: >-
+      ^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$
+    Description: >-
+      Public DNS hostname of the existing Web API EC2 instance. Do not include
+      http://, https://, a port, or a path.
+
+  OriginHttpPort:
+    Type: Number
+    Default: 8080
+    MinValue: 1
+    MaxValue: 65535
+    Description: HTTP port exposed by the Web API EC2 security group.
+
+  ApiBasePath:
+    Type: String
+    Default: api/v1
+    AllowedPattern: "^[A-Za-z0-9._~/-]+$"
+    Description: API path appended to the generated CloudFront hostname.
+
+Resources:
+  WebApiDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment:
+          Fn::Sub: QuestaCase ${EnvironmentName} Web API HTTPS edge
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: questacase-webapi-origin
+            DomainName:
+              Ref: OriginDomainName
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            CustomOriginConfig:
+              HTTPPort:
+                Ref: OriginHttpPort
+              OriginKeepaliveTimeout: 5
+              OriginProtocolPolicy: http-only
+              # CloudFront's maximum custom-origin response timeout. This gives
+              # CPU-hosted LLM queries time to complete without caching them.
+              OriginReadTimeout: 120
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: questacase-webapi-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          # AWS managed CachingDisabled policy. API responses must never be
+          # served from a CloudFront cache.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # AWS managed AllViewerExceptHostHeader policy. This forwards request
+          # headers (including Origin and Authorization), cookies and query
+          # strings while allowing CloudFront to set the EC2 origin Host header.
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-webapi-edge
+        - Key: Project
+          Value: QuestaCase
+
+Outputs:
+  CloudFrontDomainName:
+    Description: CloudFront-generated HTTPS hostname; no custom domain is required.
+    Value:
+      Fn::GetAtt: [WebApiDistribution, DomainName]
+
+  HttpsApiBaseUrl:
+    Description: Set this value as NEXT_PUBLIC_BACKEND_URL before building the webapp.
+    Value:
+      Fn::Sub:
+        - https://${DistributionDomain}/${Path}
+        - DistributionDomain:
+            Fn::GetAtt: [WebApiDistribution, DomainName]
+          Path:
+            Ref: ApiBasePath
+
+  HealthCheckUrl:
+    Description: Open this URL after the distribution status becomes Deployed.
+    Value:
+      Fn::Sub:
+        - https://${DistributionDomain}/${Path}/health
+        - DistributionDomain:
+            Fn::GetAtt: [WebApiDistribution, DomainName]
+          Path:
+            Ref: ApiBasePath
+

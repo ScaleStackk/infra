@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  QuestaCase direct HTTPS edge for an existing Web API EC2 instance. Opens
+  ports 80 and 443 and uses Systems Manager to run Caddy as a reverse proxy.
+
+Parameters:
+  ApplicationInstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: ApplicationInstanceId output from application-node-stack.
+
+  ApplicationSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group attached to the existing Web API EC2 instance.
+
+  ApiDomainName:
+    Type: String
+    Default: 16-112-144-126.sslip.io
+    AllowedPattern: >-
+      ^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$
+    Description: >-
+      DNS hostname resolving to the application Elastic IP. The default uses
+      sslip.io and requires no DNS account or purchased domain.
+
+  ApiBasePath:
+    Type: String
+    Default: api/v1
+    AllowedPattern: "^[A-Za-z0-9._~/-]+$"
+
+Resources:
+  HttpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Caddy ACME validation and HTTPS redirect
+      GroupId:
+        Ref: ApplicationSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+
+  HttpsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: QuestaCase HTTPS Web API
+      GroupId:
+        Ref: ApplicationSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+  ConfigureCaddyAssociation:
+    Type: AWS::SSM::Association
+    DependsOn:
+      - HttpIngress
+      - HttpsIngress
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - Ref: ApplicationInstanceId
+      Parameters:
+        commands:
+          - Fn::Sub: |
+              set -Eeuo pipefail
+              install -d -m 0755 /opt/questacase
+              cat > /opt/questacase/Caddyfile <<'CADDYFILE'
+              ${ApiDomainName} {
+                encode zstd gzip
+                reverse_proxy 127.0.0.1:8080
+              }
+              CADDYFILE
+              chmod 0644 /opt/questacase/Caddyfile
+              docker pull caddy:2-alpine
+              docker rm -f questacase-edge 2>/dev/null || true
+              docker run --detach \
+                --name questacase-edge \
+                --restart unless-stopped \
+                --network host \
+                --volume /opt/questacase/Caddyfile:/etc/caddy/Caddyfile:ro \
+                --volume questacase-caddy-data:/data \
+                --volume questacase-caddy-config:/config \
+                caddy:2-alpine
+              sleep 5
+              docker inspect --format '{{.State.Running}}' questacase-edge | grep -qx true
+      WaitForSuccessTimeoutSeconds: 900
+
+Outputs:
+  HttpsApiBaseUrl:
+    Description: Set this value as NEXT_PUBLIC_BACKEND_URL for the Firebase build.
+    Value:
+      Fn::Sub: https://${ApiDomainName}/${ApiBasePath}
+
+  HealthCheckUrl:
+    Description: Test this URL after the stack reaches CREATE_COMPLETE.
+    Value:
+      Fn::Sub: https://${ApiDomainName}/${ApiBasePath}/health
+
+  CaddyLogsCommand:
+    Description: Run through Session Manager if certificate issuance fails.
+    Value: sudo docker logs --tail 100 questacase-edge
+

@@ -573,6 +573,11 @@ Outputs:
     Value:
       Ref: ApplicationElasticIp
 
+  ApplicationSecurityGroupId:
+    Description: Security group ID used by optional edge stacks.
+    Value:
+      Fn::GetAtt: [ApplicationSecurityGroup, GroupId]
+
   ApiBaseUrl:
     Description: >-
       API base URL. The HTTP form cannot be called by an HTTPS Firebase page;
