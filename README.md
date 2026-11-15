@@ -6,6 +6,7 @@ This repository contains all AWS provisioning for QuestaCase:
 - `application/application-node-stack.yaml` provisions the Web API and
   inference load-balancer node.
 - `messaging/kafka-node-stack.yaml` provisions the dedicated Kafka node.
+- `workers/worker-nodes-stack.yaml` provisions the KG and embedding workers.
 - `distributed/` contains Web API plus CPU and GPU inference stacks.
 - `storage/` contains the Neo4j and Qdrant storage stacks.
 

@@ -1,0 +1,452 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  QuestaCase POC worker fleet: one KG worker EC2 instance and one embedding
+  worker EC2 instance with a persistent query-embedding API.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "^[a-z][a-z0-9-]{1,15}$"
+
+  AvailabilityZone:
+    Type: String
+    Default: ap-south-2b
+    AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+[a-z]$"
+
+  KgWorkerInstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+      - c7i-flex.large
+      - m7i-flex.large
+    Description: Free Tier-eligible instance type; KG inference runs remotely.
+
+  EmbeddingWorkerInstanceType:
+    Type: String
+    Default: c7i-flex.large
+    AllowedValues:
+      - t3.small
+      - c7i-flex.large
+      - m7i-flex.large
+    Description: >-
+      Free Tier-eligible instance with enough memory for the batch worker and
+      persistent query-embedding service together.
+
+  RootVolumeSize:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+  JudgmentBucketName:
+    Type: String
+    Default: questacase
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+
+  JudgmentPrefix:
+    Type: String
+    Default: docs
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9/_-]{0,127}$"
+
+  KafkaBrokers:
+    Type: String
+    Default: 13.234.216.17:9092
+    AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
+
+  InferenceGenerateUrl:
+    Type: String
+    Default: http://ec2-13-126-237-204.ap-south-1.compute.amazonaws.com:11434/api/generate
+    AllowedPattern: '^https?://[^\s]+$'
+
+  InferenceModel:
+    Type: String
+    Default: qwen3:4b
+    AllowedPattern: "^[A-Za-z0-9._:-]+$"
+
+  Neo4jUrl:
+    Type: String
+    Default: http://ec2-16-112-8-114.ap-south-2.compute.amazonaws.com:7474
+    AllowedPattern: '^https?://[^\s]+$'
+
+  Neo4jUsername:
+    Type: String
+    Default: neo4j
+    AllowedPattern: "^[A-Za-z0-9._-]+$"
+
+  Neo4jPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    MaxLength: 128
+    AllowedPattern: "^[A-Za-z0-9._@#%+=!?~-]+$"
+
+  QdrantUrl:
+    Type: String
+    Default: http://ec2-16-113-78-201.ap-south-2.compute.amazonaws.com:6333
+    AllowedPattern: '^https?://[^\s]+$'
+
+  QdrantWriteApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    MaxLength: 128
+    AllowedPattern: "^[A-Za-z0-9._~-]+$"
+
+  EmbeddingApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    MaxLength: 128
+    AllowedPattern: "^[A-Za-z0-9._~-]+$"
+    Description: Bearer key used by the Web API when calling /embed.
+
+  WebApiClientCidr:
+    Type: String
+    Default: 16.112.144.126/32
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    Description: Web API Elastic IP allowed to call the embedding API.
+
+  KgWorkerRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/kg_worker.git
+    AllowedPattern: '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
+
+  KgWorkerRepositoryBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+  EmbeddingWorkerRepositoryUrl:
+    Type: String
+    Default: https://github.com/ScaleStackk/embed_worker.git
+    AllowedPattern: '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$'
+
+  EmbeddingWorkerRepositoryBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.80.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-workers-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: InternetGateway
+      VpcId:
+        Ref: Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Ref: AvailabilityZone
+      CidrBlock: 10.80.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: Vpc
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-workers-public
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+      RouteTableId:
+        Ref: PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet
+
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Embedding API access from the QuestaCase Web API
+      SecurityGroupIngress:
+        - Description: Query embedding API from Web API
+          IpProtocol: tcp
+          FromPort: 8081
+          ToPort: 8081
+          CidrIp:
+            Ref: WebApiClientCidr
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: Vpc
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadJudgmentPdfs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${JudgmentBucketName}/${JudgmentPrefix}/*
+
+  WorkerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: WorkerRole
+
+  KgWorkerHost:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId:
+        Ref: LatestAmiId
+      InstanceType:
+        Ref: KgWorkerInstanceType
+      IamInstanceProfile:
+        Ref: WorkerInstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 2
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - Ref: WorkerSecurityGroup
+          SubnetId:
+            Ref: PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize:
+              Ref: RootVolumeSize
+            VolumeType: gp3
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/usr/bin/env bash
+            set -Eeuo pipefail
+            exec > >(tee /var/log/questacase-kg-worker-bootstrap.log | logger -t questacase-kg-worker -s 2>/dev/console) 2>&1
+
+            dnf install -y docker git
+            systemctl enable --now docker
+            install -d -m 0755 /opt/questacase /var/lib/questacase/kg-worker
+
+            git clone --depth 1 --branch '${KgWorkerRepositoryBranch}' '${KgWorkerRepositoryUrl}' /opt/questacase/kg_worker
+            docker build --tag legal-kg-worker:latest /opt/questacase/kg_worker
+
+            cat > /opt/questacase/kg-worker.env <<'ENVFILE'
+            AWS_REGION=${AWS::Region}
+            KAFKA_BROKERS=${KafkaBrokers}
+            KAFKA_UPLOAD_TOPIC=judgment.uploaded
+            KAFKA_CONSUMER_GROUP=questacase-kg-workers
+            KAFKA_STATUS_TOPIC=processing.status
+            KAFKA_FAILED_TOPIC=processing.failed
+            WORKER_MAX_ATTEMPTS=3
+            KEEP_JOB_FILES=false
+            KG_MODEL=${InferenceModel}
+            OLLAMA_URL=${InferenceGenerateUrl}
+            NEO4J_URL=${Neo4jUrl}
+            NEO4J_USERNAME=${Neo4jUsername}
+            NEO4J_PASSWORD=${Neo4jPassword}
+            NEO4J_DATABASE=neo4j
+            ENVFILE
+            chmod 0600 /opt/questacase/kg-worker.env
+
+            docker run --detach \
+              --name questacase-kg-worker \
+              --restart unless-stopped \
+              --env-file /opt/questacase/kg-worker.env \
+              --volume /var/lib/questacase/kg-worker:/data \
+              --memory 1400m \
+              --cpus 1.0 \
+              --entrypoint python \
+              legal-kg-worker:latest \
+              /app/queue_worker.py
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-kg-worker
+
+  EmbeddingWorkerHost:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId:
+        Ref: LatestAmiId
+      InstanceType:
+        Ref: EmbeddingWorkerInstanceType
+      IamInstanceProfile:
+        Ref: WorkerInstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 2
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - Ref: WorkerSecurityGroup
+          SubnetId:
+            Ref: PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize:
+              Ref: RootVolumeSize
+            VolumeType: gp3
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/usr/bin/env bash
+            set -Eeuo pipefail
+            exec > >(tee /var/log/questacase-embedding-worker-bootstrap.log | logger -t questacase-embedding-worker -s 2>/dev/console) 2>&1
+
+            dnf install -y docker git
+            systemctl enable --now docker
+            install -d -m 0755 /opt/questacase /var/lib/questacase/embedding-worker
+            chown 10001:10001 /var/lib/questacase/embedding-worker
+
+            git clone --depth 1 --branch '${EmbeddingWorkerRepositoryBranch}' '${EmbeddingWorkerRepositoryUrl}' /opt/questacase/embed_worker
+            docker build --tag legal-embedding-worker:latest /opt/questacase/embed_worker
+
+            cat > /opt/questacase/embedding-worker.env <<'ENVFILE'
+            AWS_REGION=${AWS::Region}
+            KAFKA_BROKERS=${KafkaBrokers}
+            KAFKA_UPLOAD_TOPIC=judgment.uploaded
+            KAFKA_CONSUMER_GROUP=questacase-embedding-workers
+            KAFKA_STATUS_TOPIC=processing.status
+            KAFKA_FAILED_TOPIC=processing.failed
+            WORKER_MAX_ATTEMPTS=3
+            KEEP_JOB_FILES=false
+            QDRANT_URL=${QdrantUrl}
+            QDRANT_API_KEY=${QdrantWriteApiKey}
+            QDRANT_COLLECTION=judgment_chunks
+            OMP_NUM_THREADS=1
+            ENVFILE
+            chmod 0600 /opt/questacase/embedding-worker.env
+
+            docker run --detach \
+              --name questacase-embedding-worker \
+              --restart unless-stopped \
+              --env-file /opt/questacase/embedding-worker.env \
+              --volume /var/lib/questacase/embedding-worker:/data \
+              --memory 1600m \
+              --cpus 1.0 \
+              --entrypoint python \
+              legal-embedding-worker:latest \
+              /app/queue_worker.py
+
+            docker run --detach \
+              --name questacase-embedding-api \
+              --restart unless-stopped \
+              --publish 8081:8081 \
+              --env PORT=8081 \
+              --env EMBEDDING_API_KEY='${EmbeddingApiKey}' \
+              --env OMP_NUM_THREADS=1 \
+              --memory 1200m \
+              --cpus 1.0 \
+              --entrypoint python \
+              legal-embedding-worker:latest \
+              /app/embedding_server.py
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: questacase-${EnvironmentName}-embedding-worker
+
+Outputs:
+  KgWorkerInstanceId:
+    Value:
+      Ref: KgWorkerHost
+
+  KgWorkerPublicDns:
+    Value:
+      Fn::GetAtt:
+        - KgWorkerHost
+        - PublicDnsName
+
+  KgWorkerKafkaClientCidr:
+    Description: Add this value to the Kafka stack client CIDRs.
+    Value:
+      Fn::Sub: ${KgWorkerHost.PublicIp}/32
+
+  EmbeddingWorkerInstanceId:
+    Value:
+      Ref: EmbeddingWorkerHost
+
+  EmbeddingWorkerPublicDns:
+    Value:
+      Fn::GetAtt:
+        - EmbeddingWorkerHost
+        - PublicDnsName
+
+  EmbeddingWorkerKafkaClientCidr:
+    Description: Add this value to the Kafka stack client CIDRs.
+    Value:
+      Fn::Sub: ${EmbeddingWorkerHost.PublicIp}/32
+
+  EmbeddingApiUrl:
+    Description: Set this as the Web API EmbeddingApiUrl parameter.
+    Value:
+      Fn::Sub: http://${EmbeddingWorkerHost.PublicDnsName}:8081/embed
+
+  KgWorkerBootstrapLog:
+    Value: sudo tail -n 200 /var/log/questacase-kg-worker-bootstrap.log
+
+  EmbeddingWorkerBootstrapLog:
+    Value: sudo tail -n 200 /var/log/questacase-embedding-worker-bootstrap.log
