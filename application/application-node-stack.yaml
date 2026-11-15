@@ -35,7 +35,7 @@ Parameters:
 
   JudgmentBucketName:
     Type: String
-    Default: questacass
+    Default: questacase
     AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
     Description: Globally unique S3 bucket created by this stack for judgment PDFs.
 
