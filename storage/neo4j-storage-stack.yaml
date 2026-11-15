@@ -11,6 +11,11 @@ Parameters:
   PublicSubnetCidr:
     Type: String
     Default: 10.60.1.0/24
+  AvailabilityZone:
+    Type: String
+    Default: ap-south-2b
+    AllowedPattern: "^[a-z]{2}-[a-z]+-[0-9]+[a-z]$"
+    Description: Availability Zone for the EC2 instance and retained EBS volume.
   PublicIngressCidr:
     Type: String
     Default: 0.0.0.0/0
@@ -18,7 +23,7 @@ Parameters:
     Description: CIDR allowed to access Neo4j Browser and Bolt. Use your public IP with /32 whenever possible.
   InstanceType:
     Type: String
-    Default: c7i-flex.large
+    Default: t3.medium
   RootVolumeSize:
     Type: Number
     Default: 30
@@ -82,7 +87,7 @@ Resources:
       VpcId: !Ref Vpc
       CidrBlock: !Ref PublicSubnetCidr
       MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !Ref AvailabilityZone
       Tags:
         - Key: Name
           Value: !Sub questacase-${EnvironmentName}-neo4j-public

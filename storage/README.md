@@ -12,6 +12,10 @@ build the corresponding Docker image and start it with Docker Compose. Their
 default `PublicIngressCidr` is `0.0.0.0/0` for the short-lived POC. Restrict it
 to trusted `/32` addresses whenever possible.
 
+The Hyderabad defaults use `t3.medium` in `ap-south-2b`. If that zone reports
+insufficient capacity, select `ap-south-2c` through the `AvailabilityZone`
+parameter without changing the template.
+
 The Neo4j template includes a visible demo-only default password so the stack
 can be created without entering one. Override `Neo4jPassword` for every shared
 or longer-lived deployment. Never combine the published default password with
