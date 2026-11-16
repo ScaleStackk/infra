@@ -61,9 +61,10 @@ Each participant sends the Web API owner these stack outputs:
 - `SecurityGroupId`
 - `PrivateIp`
 
-The default is `g6.xlarge`, which provides one NVIDIA L4 GPU. The generated
-container configuration requests that GPU. Confirm that the selected Region has
-G6 capacity and that the AWS account has sufficient On-Demand G-instance quota.
+The default is `g4dn.xlarge`, which provides four vCPUs, 16 GiB RAM, and one
+NVIDIA T4 GPU. The generated container configuration requests that GPU. Confirm
+that the selected Region has G4dn capacity and that the AWS account's **Running
+On-Demand G and VT instances** quota is at least four vCPUs.
 
 The default ingress CIDR exposes the unauthenticated Ollama API to the internet
 for the controlled POC. Prefer `<web-api-public-ip>/32` once that address is

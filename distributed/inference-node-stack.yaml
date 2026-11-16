@@ -19,9 +19,12 @@ Parameters:
     Description: CIDR allowed to call Ollama. The default exposes the demo API to the internet; restrict it whenever possible.
   InstanceType:
     Type: String
-    Default: g6.xlarge
+    Default: g4dn.xlarge
     AllowedPattern: ^(?:g4dn|g5|g6|g6e|g6f)\.[a-z0-9]+$
     ConstraintDescription: Select an NVIDIA GPU-backed EC2 instance type.
+    Description: >-
+      g4dn.xlarge uses four vCPUs, 16 GiB RAM and one NVIDIA T4 GPU and is the
+      cost-conscious default for Qwen 4B.
   RootVolumeSize:
     Type: Number
     Default: 60
@@ -247,5 +250,7 @@ Outputs:
     Value: !Ref RouteTable
   SecurityGroupId:
     Value: !Ref InferenceSecurityGroup
-  BootstrapLogCommand:
+  SessionManagerCommand:
     Value: !Sub aws ssm start-session --target ${InferenceInstance} --region ${AWS::Region}
+  BootstrapLogCommand:
+    Value: sudo tail -n 200 /var/log/questacase-inference-bootstrap.log

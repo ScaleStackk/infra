@@ -75,6 +75,13 @@ Parameters:
     Default: qwen3:4b
     AllowedPattern: "^[A-Za-z0-9._:-]+$"
 
+  KgNumPredict:
+    Type: Number
+    Default: 3000
+    MinValue: 512
+    MaxValue: 6000
+    Description: Maximum output tokens for each KG extraction request.
+
   Neo4jUrl:
     Type: String
     Default: http://ec2-16-112-8-114.ap-south-2.compute.amazonaws.com:7474
@@ -302,6 +309,7 @@ Resources:
             WORKER_MAX_ATTEMPTS=3
             KEEP_JOB_FILES=false
             KG_MODEL=${InferenceModel}
+            KG_NUM_PREDICT=${KgNumPredict}
             OLLAMA_URL=${InferenceGenerateUrl}
             NEO4J_URL=${Neo4jUrl}
             NEO4J_USERNAME=${Neo4jUsername}

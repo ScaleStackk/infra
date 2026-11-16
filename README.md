@@ -13,6 +13,8 @@ This repository contains all AWS provisioning for QuestaCase:
 - `workers/worker-nodes-stack.yaml` provisions the KG and embedding workers.
 - `distributed/` contains Web API plus CPU and GPU inference stacks.
 - `storage/` contains the Neo4j and Qdrant storage stacks.
+- `local/` runs all processing services as local containers while continuing to
+  use the AWS S3, Neo4j and Qdrant deployments for durable storage.
 
 Runtime Docker and Compose files remain in their respective application
 repositories and are cloned by these templates during EC2 bootstrap.
