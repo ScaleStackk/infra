@@ -68,7 +68,12 @@ Resources:
               cat > /opt/questacase/Caddyfile <<'CADDYFILE'
               ${ApiDomainName} {
                 encode zstd gzip
-                reverse_proxy 127.0.0.1:8080
+                handle_path /ollama/* {
+                  reverse_proxy 127.0.0.1:11435
+                }
+                handle {
+                  reverse_proxy 127.0.0.1:8080
+                }
               }
               CADDYFILE
               chmod 0644 /opt/questacase/Caddyfile
@@ -96,6 +101,16 @@ Outputs:
     Description: Test this URL after the stack reaches CREATE_COMPLETE.
     Value:
       Fn::Sub: https://${ApiDomainName}/${ApiBasePath}/health
+
+  InferenceGatewayGenerateUrl:
+    Description: Set this as the worker stack InferenceGenerateUrl parameter.
+    Value:
+      Fn::Sub: https://${ApiDomainName}/ollama/api/generate
+
+  InferenceGatewayTagsUrl:
+    Description: Test this URL to verify Caddy-to-HAProxy-to-Ollama routing.
+    Value:
+      Fn::Sub: https://${ApiDomainName}/ollama/api/tags
 
   CaddyLogsCommand:
     Description: Run through Session Manager if certificate issuance fails.

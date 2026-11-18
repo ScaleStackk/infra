@@ -67,8 +67,11 @@ Parameters:
 
   InferenceGenerateUrl:
     Type: String
-    Default: http://ec2-13-126-237-204.ap-south-1.compute.amazonaws.com:11434/api/generate
+    Default: https://16-112-144-126.sslip.io/ollama/api/generate
     AllowedPattern: '^https?://[^\s]+$'
+    Description: >-
+      InferenceGatewayGenerateUrl from the application or direct HTTPS edge
+      stack. Workers must call HAProxy rather than an inference node directly.
 
   InferenceModel:
     Type: String

@@ -40,8 +40,9 @@ This CloudFormation stack creates the upload path needed by the Firebase UI:
 two containers on it:
 
 - `questacase-webapi`, exposed on port 8080;
-- `questacase-inference-lb`, available only to Web API as
-  `http://inference:11434` on the shared Docker network.
+- `questacase-inference-lb`, available to the Web API as
+  `http://inference:11434` on the shared Docker network and to remote workers
+  through the HTTPS edge at `/ollama/*`.
 
 The template accepts the comma-separated inference nodes and the Neo4j,
 Qdrant, and embedding API endpoints as parameters. It creates the private S3
@@ -58,6 +59,11 @@ If `ApiDomainName` and `Route53HostedZoneId` are supplied, Caddy is started as
 an additional TLS edge container. Without a domain, the output is an HTTP URL,
 which is useful for direct testing but cannot be called from an HTTPS Firebase
 page because browsers block mixed content.
+
+Caddy reserves `/ollama/*` for the inference gateway and strips that prefix
+before forwarding to HAProxy on `127.0.0.1:11435`. Supply the resulting
+`InferenceGatewayGenerateUrl` output to the worker stack. Workers must not point
+directly at an Ollama node.
 
 Neo4j, Qdrant, Kafka, extraction workers and inference nodes are not created by
 the application stack.
@@ -93,7 +99,8 @@ If AWS has not yet verified the account for CloudFront, use
 and its security-group ID. The template defaults to the free testing hostname
 `16-112-144-126.sslip.io`, opens ports 80 and 443, and runs Caddy through an SSM
 State Manager association. Caddy obtains and renews the public certificate and
-proxies HTTPS requests to the Web API on `127.0.0.1:8080`.
+proxies API requests to the Web API on `127.0.0.1:8080` and `/ollama/*`
+requests to HAProxy on `127.0.0.1:11435`.
 
 The `sslip.io` hostname is appropriate for this short-lived POC but is a shared
 public DNS service. Certificate issuance can occasionally be delayed by shared

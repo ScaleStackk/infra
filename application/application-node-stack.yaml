@@ -102,11 +102,11 @@ Parameters:
 
   InferenceNodes:
     Type: String
-    Default: ec2-13-126-237-204.ap-south-1.compute.amazonaws.com:11434
-    AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
+    Default: https://34-130-239-166.sslip.io
+    AllowedPattern: '^(?:https://[A-Za-z0-9._-]+(?::[0-9]+)?|[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*)$'
     Description: >-
-      Comma-separated inference endpoints, for example
-      3.6.40.118:11434,13.201.10.20:11434.
+      One HTTPS inference origin or comma-separated HTTP host:port nodes. HAProxy
+      routes Web API and worker inference through these backends.
 
   InferenceModel:
     Type: String
@@ -515,7 +515,12 @@ Resources:
               cat > /opt/questacase/Caddyfile <<'CADDYFILE'
             ${ApiDomainName} {
               encode zstd gzip
-              reverse_proxy 127.0.0.1:8080
+              handle_path /ollama/* {
+                reverse_proxy 127.0.0.1:11435
+              }
+              handle {
+                reverse_proxy 127.0.0.1:8080
+              }
             }
             CADDYFILE
               docker run --detach \
@@ -587,6 +592,12 @@ Outputs:
         - HasApiDomain
         - Fn::Sub: https://${ApiDomainName}/api/v1
         - Fn::Sub: http://${ApplicationElasticIp}:8080/api/v1
+
+  InferenceGatewayGenerateUrl:
+    Condition: HasApiDomain
+    Description: HTTPS Ollama generate endpoint routed through HAProxy.
+    Value:
+      Fn::Sub: https://${ApiDomainName}/ollama/api/generate
 
   JudgmentBucket:
     Description: Private S3 bucket used for judgment PDFs.
