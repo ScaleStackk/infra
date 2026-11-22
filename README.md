@@ -23,6 +23,9 @@ deployment path is `application/`, `messaging/`, `workers/`, and `storage/`.
 Runtime Docker and Compose files remain in their respective application
 repositories and are cloned by these templates during EC2 bootstrap.
 
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the Web API/KG worker graph
+contract, compatible checkpoints, and the required Neo4j re-import procedure.
+
 ## Phase 1 upload stack
 
 This section documents the retained legacy topology. Do not combine this stack
