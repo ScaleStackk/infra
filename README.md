@@ -23,6 +23,35 @@ deployment path is `application/`, `messaging/`, `workers/`, and `storage/`.
 Runtime Docker and Compose files remain in their respective application
 repositories and are cloned by these templates during EC2 bootstrap.
 
+## End-to-end architecture
+
+```mermaid
+flowchart LR
+  Browser[Browser / Next.js] -->|presign and complete| API[Web API]
+  Browser -->|direct PDF PUT| S3[(Private S3)]
+  API -->|judgment.uploaded| Kafka[(Kafka)]
+  Kafka --> KG[KG workers]
+  Kafka --> EMB[Embedding workers]
+  S3 -->|source PDF| KG
+  KG --> Neo4j[(Neo4j graph)]
+  EMB --> Qdrant[(Qdrant vectors)]
+
+  Browser -->|question| API
+  API --> Embed[Embedding API]
+  Embed --> API
+  API --> Qdrant
+  API --> Neo4j
+  API --> LB[Inference gateway / HAProxy]
+  LB --> Ollama[Ollama / Qwen]
+  Ollama --> API
+  API -->|answer and cited evidence| Browser
+```
+
+The upload path stores the original PDF in S3 and queues asynchronous processing.
+The query path combines vector and graph evidence before generating a cited
+answer. `local/` runs the services in containers but, as documented there, uses
+the configured AWS S3, Neo4j, and Qdrant deployments for durable data.
+
 ## Phase 1 upload stack
 
 This section documents the retained legacy topology. Do not combine this stack
