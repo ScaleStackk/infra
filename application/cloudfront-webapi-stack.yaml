@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  QuestaCase HTTPS edge for the existing Web API. CloudFront terminates TLS and
-  forwards uncached API requests to the EC2 origin over HTTP.
+  LEGACY optional HTTPS edge for the existing Web API. The current POC uses
+  direct-https-edge-stack.yaml because CloudFront creation is unavailable on
+  the demo AWS account.
 
 Parameters:
   EnvironmentName:

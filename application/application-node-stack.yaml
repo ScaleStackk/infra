@@ -12,14 +12,16 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: m7i-flex.large
+    Default: t3.small
     AllowedValues:
+      - t3.small
       - t3.medium
       - t3.large
       - c7i-flex.large
       - m7i-flex.large
     Description: >-
-      m7i-flex.large is recommended for Web API, HAProxy, and query embeddings.
+      t3.small is the low-cost POC default for Web API, HAProxy, and Caddy.
+      Select a larger type when concurrent query traffic requires it.
 
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -28,7 +30,7 @@ Parameters:
 
   RootVolumeSize:
     Type: Number
-    Default: 40
+    Default: 30
     MinValue: 30
     MaxValue: 200
     Description: Encrypted gp3 root volume size in GiB.
@@ -63,7 +65,6 @@ Parameters:
 
   KafkaBrokers:
     Type: String
-    Default: 13.234.216.17:9092
     AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
     Description: >-
       KafkaBroker output from messaging/kafka-node-stack.yaml, normally an EC2
@@ -102,11 +103,10 @@ Parameters:
 
   InferenceNodes:
     Type: String
-    Default: https://34-130-239-166.sslip.io
     AllowedPattern: '^(?:https://[A-Za-z0-9._-]+(?::[0-9]+)?|[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*)$'
     Description: >-
-      One HTTPS inference origin or comma-separated HTTP host:port nodes. HAProxy
-      routes Web API and worker inference through these backends.
+      Current HTTPS inference origin or comma-separated HTTP host:port nodes.
+      Required so a new stack cannot silently use an obsolete origin.
 
   InferenceModel:
     Type: String
@@ -121,9 +121,10 @@ Parameters:
 
   EmbeddingApiUrl:
     Type: String
-    Default: http://ec2-13-126-205-210.ap-south-1.compute.amazonaws.com:8081/embed
     AllowedPattern: '^https?://[^\s]+$'
-    Description: HTTP endpoint used to embed each user query.
+    Description: >-
+      Current EmbeddingApiUrl output from the worker stack. It is intentionally
+      required because the worker public DNS can change after stop/start.
 
   EmbeddingApiKey:
     Type: String
@@ -133,9 +134,10 @@ Parameters:
 
   QdrantUrl:
     Type: String
-    Default: http://ec2-16-113-78-201.ap-south-2.compute.amazonaws.com:6333
     AllowedPattern: '^https?://[^\s]+$'
-    Description: Qdrant REST base URL, normally ending in port 6333.
+    Description: >-
+      Current QdrantRestUrl output from the storage stack, normally ending in
+      port 6333. Required because the storage public DNS can change.
 
   QdrantApiKey:
     Type: String
@@ -147,9 +149,10 @@ Parameters:
 
   Neo4jUrl:
     Type: String
-    Default: http://ec2-16-112-8-114.ap-south-2.compute.amazonaws.com:7474
     AllowedPattern: '^https?://[^\s]+$'
-    Description: Neo4j HTTP base URL, normally ending in port 7474.
+    Description: >-
+      Current Neo4jBrowserUrl output from the storage stack, normally ending in
+      port 7474. Required because the storage public DNS can change.
 
   Neo4jUsername:
     Type: String

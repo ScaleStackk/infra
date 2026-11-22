@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: QuestaCase CPU inference EC2 node using Qwen3 4B for Free Tier-compatible testing.
+Description: QuestaCase CPU inference EC2 node using Qwen3 4B for low-cost testing.
 
 Parameters:
   EnvironmentName:
@@ -22,7 +22,9 @@ Parameters:
     Default: m7i-flex.large
     AllowedValues:
       - m7i-flex.large
-    Description: Free Tier-eligible x86 instance with 8 GiB RAM for CPU-only inference.
+    Description: >-
+      Minimum supported 8 GiB x86 instance for CPU-only Qwen3 4B inference.
+      Free Tier eligibility depends on the AWS account and is not assumed.
   RootVolumeSize:
     Type: Number
     Default: 60

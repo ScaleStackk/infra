@@ -11,7 +11,7 @@ fi
 STACK_NAME="${STACK_NAME:-questacase-demo-upload}"
 AWS_REGION_NAME="${AWS_REGION_NAME:-ap-south-1}"
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-demo}"
-INSTANCE_TYPE="${INSTANCE_TYPE:-t3.medium}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-t3.small}"
 FIREBASE_ORIGIN="${FIREBASE_ORIGIN:-https://questacase.web.app}"
 FIREBASE_AUTH_ORIGIN="${FIREBASE_AUTH_ORIGIN:-https://questacase.firebaseapp.com}"
 

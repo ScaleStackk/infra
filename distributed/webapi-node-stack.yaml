@@ -1,5 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: QuestaCase Web API EC2 node with an HAProxy inference load balancer.
+Description: >-
+  LEGACY cross-account Web API topology. Prefer
+  application/application-node-stack.yaml for the current POC deployment.
 
 Parameters:
   EnvironmentName:
@@ -14,7 +16,7 @@ Parameters:
     Default: 10.10.1.0/24
   InstanceType:
     Type: String
-    Default: t3.medium
+    Default: t3.small
   RootVolumeSize:
     Type: Number
     Default: 30
@@ -49,7 +51,9 @@ Parameters:
     Description: Comma-separated private Kafka host:port endpoints.
   InferenceNodes:
     Type: String
-    Description: Comma-separated peered private inference endpoints, including port 11434.
+    Description: >-
+      One HTTPS Ollama origin or comma-separated private host:port endpoints.
+      The current HAProxy image supports both forms.
   AllowedOrigins:
     Type: String
     Default: https://questacase.web.app,https://questacase.firebaseapp.com,http://localhost:3000

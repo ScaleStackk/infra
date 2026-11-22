@@ -1,17 +1,21 @@
 # QuestaCase AWS infrastructure
 
-This repository contains all AWS provisioning for QuestaCase:
+This repository contains all AWS provisioning for QuestaCase. The current POC
+deployment path is `application/`, `messaging/`, `workers/`, and `storage/`.
 
-- `phase1-upload-stack.yaml` provisions the upload/API demonstration stack.
+- `phase1-upload-stack.yaml` is retained only as the legacy combined
+  upload/API/Kafka demonstration stack.
 - `application/application-node-stack.yaml` provisions the Web API and
   inference load-balancer node.
-- `application/cloudfront-webapi-stack.yaml` adds a generated HTTPS CloudFront
-  endpoint in front of the existing Web API EC2 instance.
+- `application/cloudfront-webapi-stack.yaml` is the legacy optional CloudFront
+  edge; the demo account could not create CloudFront distributions.
 - `application/direct-https-edge-stack.yaml` is the no-CloudFront fallback. It
   opens ports 80/443 and starts Caddy on the existing application instance.
 - `messaging/kafka-node-stack.yaml` provisions the dedicated Kafka node.
 - `workers/worker-nodes-stack.yaml` provisions the KG and embedding workers.
-- `distributed/` contains Web API plus CPU and GPU inference stacks.
+- `distributed/` contains the earlier cross-account Web API topology plus
+  reusable CPU and GPU inference-node stacks. The current central application
+  node is provisioned from `application/application-node-stack.yaml`.
 - `storage/` contains the Neo4j and Qdrant storage stacks.
 - `local/` runs all processing services as local containers while continuing to
   use the AWS S3, Neo4j and Qdrant deployments for durable storage.
@@ -20,6 +24,10 @@ Runtime Docker and Compose files remain in their respective application
 repositories and are cloned by these templates during EC2 bootstrap.
 
 ## Phase 1 upload stack
+
+This section documents the retained legacy topology. Do not combine this stack
+with the current separated application and Kafka stacks because it creates
+overlapping responsibilities.
 
 This CloudFormation stack creates the upload path needed by the Firebase UI:
 
@@ -51,9 +59,10 @@ the EC2 role object access only under `JudgmentPrefix`. Supply the `KafkaBroker`
 output from the messaging stack as the application stack's `KafkaBrokers`
 parameter.
 
-The checked-in application template currently defaults to the deployed
-Neo4j, Qdrant, and Qwen inference hostnames. Storage credentials are still
-required stack parameters and are never inferred from the public endpoints.
+The application template requires the current Kafka, embedding, Neo4j, Qdrant,
+and inference endpoints as stack parameters. This prevents a newly created
+stack from silently using an obsolete public address. Storage credentials are
+also required and are never inferred from the public endpoints.
 
 If `ApiDomainName` and `Route53HostedZoneId` are supplied, Caddy is started as
 an additional TLS edge container. Without a domain, the output is an HTTP URL,
@@ -68,7 +77,16 @@ directly at an Ollama node.
 Neo4j, Qdrant, Kafka, extraction workers and inference nodes are not created by
 the application stack.
 
+The default `t3.small` is intended for a low-traffic demonstration. Increase
+the instance type if multiple queries will run concurrently. Free Tier
+eligibility varies by account and must be confirmed in the EC2 launch console;
+the templates do not claim that larger compute-optimized defaults are free.
+
 ## CloudFront HTTPS edge
+
+This is a retained optional/legacy path. The current POC uses
+`application/direct-https-edge-stack.yaml` and Caddy, which also exposes the
+HAProxy inference gateway at `/ollama/*`.
 
 `application/cloudfront-webapi-stack.yaml` is a small, separate stack for the
 already-running application node. It does not replace, restart, or modify the
@@ -121,6 +139,28 @@ Supply the Web API, KG-worker and embedding-worker public IPs as `/32` client
 CIDRs. Kafka uses plaintext transport for this POC, so do not open port 9092 to
 `0.0.0.0/0`. After a stop/start, update clients with the new Kafka public DNS
 and update the stack's client CIDRs if any client public IPs also changed.
+
+## Worker nodes
+
+`workers/worker-nodes-stack.yaml` starts one KG worker and one embedding worker
+host. Both default to `t3.small` for a low-cost POC. The embedding host also
+runs the query-embedding API; choose a larger allowed instance type for sustained
+ingestion or concurrent requests.
+
+KG extraction defaults to `KgNumPredict=3000` and
+`KgMaxBatchChars=12000`. The smaller semantic batches reduce truncated JSON
+responses while preserving the existing retry behavior. The worker calls the
+`InferenceGatewayGenerateUrl` output from the application or direct HTTPS edge
+stack, not an Ollama node directly.
+
+## Endpoint lifecycle
+
+The Kafka, Neo4j, Qdrant, and embedding-worker stacks intentionally do not
+allocate Elastic IPs. Their public IP addresses and public DNS names can change
+after an EC2 stop/start. Before creating or updating the application and worker
+stacks, copy the latest stack outputs into the endpoint parameters. Changing a
+template in Git does not reconfigure already-running containers; update the
+CloudFormation stack or rebuild/recreate the affected container explicitly.
 
 ## Before deployment
 

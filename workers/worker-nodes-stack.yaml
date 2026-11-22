@@ -21,18 +21,20 @@ Parameters:
       - t3.small
       - c7i-flex.large
       - m7i-flex.large
-    Description: Free Tier-eligible instance type; KG inference runs remotely.
+    Description: >-
+      Low-cost POC default. KG inference runs remotely, so this host performs
+      PDF handling, validation, and Neo4j import only.
 
   EmbeddingWorkerInstanceType:
     Type: String
-    Default: c7i-flex.large
+    Default: t3.small
     AllowedValues:
       - t3.small
       - c7i-flex.large
       - m7i-flex.large
     Description: >-
-      Free Tier-eligible instance with enough memory for the batch worker and
-      persistent query-embedding service together.
+      t3.small is the low-cost POC default. Use c7i-flex.large or
+      m7i-flex.large for sustained ingestion or concurrent embedding requests.
 
   RootVolumeSize:
     Type: Number
@@ -62,12 +64,11 @@ Parameters:
 
   KafkaBrokers:
     Type: String
-    Default: 13.234.216.17:9092
     AllowedPattern: '^[A-Za-z0-9._-]+:[0-9]+(?:,[A-Za-z0-9._-]+:[0-9]+)*$'
+    Description: Current KafkaBroker output from the messaging stack.
 
   InferenceGenerateUrl:
     Type: String
-    Default: https://16-112-144-126.sslip.io/ollama/api/generate
     AllowedPattern: '^https?://[^\s]+$'
     Description: >-
       InferenceGatewayGenerateUrl from the application or direct HTTPS edge
@@ -85,10 +86,19 @@ Parameters:
     MaxValue: 6000
     Description: Maximum output tokens for each KG extraction request.
 
+  KgMaxBatchChars:
+    Type: Number
+    Default: 12000
+    MinValue: 4000
+    MaxValue: 24000
+    Description: >-
+      Maximum extracted characters sent in one KG inference request. The
+      conservative default reduces truncated JSON responses from the LLM.
+
   Neo4jUrl:
     Type: String
-    Default: http://ec2-16-112-8-114.ap-south-2.compute.amazonaws.com:7474
     AllowedPattern: '^https?://[^\s]+$'
+    Description: Current Neo4jBrowserUrl output from the storage stack.
 
   Neo4jUsername:
     Type: String
@@ -104,8 +114,8 @@ Parameters:
 
   QdrantUrl:
     Type: String
-    Default: http://ec2-16-113-78-201.ap-south-2.compute.amazonaws.com:6333
     AllowedPattern: '^https?://[^\s]+$'
+    Description: Current QdrantRestUrl output from the storage stack.
 
   QdrantWriteApiKey:
     Type: String
@@ -124,9 +134,10 @@ Parameters:
 
   WebApiClientCidr:
     Type: String
-    Default: 16.112.144.126/32
     AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
-    Description: Web API Elastic IP allowed to call the embedding API.
+    Description: >-
+      Current application Elastic IP with /32, allowed to call the embedding
+      API. Required so a recreated application is not accidentally blocked.
 
   KgWorkerRepositoryUrl:
     Type: String
@@ -313,6 +324,7 @@ Resources:
             KEEP_JOB_FILES=false
             KG_MODEL=${InferenceModel}
             KG_NUM_PREDICT=${KgNumPredict}
+            KG_MAX_BATCH_CHARS=${KgMaxBatchChars}
             OLLAMA_URL=${InferenceGenerateUrl}
             NEO4J_URL=${Neo4jUrl}
             NEO4J_USERNAME=${Neo4jUsername}

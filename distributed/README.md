@@ -1,12 +1,17 @@
 # QuestaCase cross-account compute stacks
 
+This directory preserves the earlier cross-account compute topology. Use
+`../application/application-node-stack.yaml` for the current central
+application deployment; the CPU and GPU inference-node templates remain useful
+when AWS-hosted inference nodes are required.
+
 CloudFormation cannot create EC2 instances directly inside unrelated AWS
 accounts from an ordinary single-account stack. Deploy these two templates:
 
 - `inference-node-stack.yaml` once in every participant's AWS account.
 - `cpu-inference-node-stack.yaml` for a slower CPU-only Qwen3 4B test node on
-  `m7i-flex.large`; use this instead of the GPU template when testing with an
-  eligible Free Tier account.
+  `m7i-flex.large`. This is a lower-cost alternative to GPU inference, but Free
+  Tier eligibility is account-specific and is not assumed.
 - `webapi-node-stack.yaml` once in the central Web API account.
 
 The Web API template uses the latest regional Amazon Linux 2023 x86-64 AMI. The

@@ -22,7 +22,7 @@ aws cloudformation deploy \
     "EnvironmentName=${ENVIRONMENT_NAME:-demo}" \
     "VpcCidr=${VPC_CIDR:-10.10.0.0/16}" \
     "PublicSubnetCidr=${PUBLIC_SUBNET_CIDR:-10.10.1.0/24}" \
-    "InstanceType=${INSTANCE_TYPE:-t3.medium}" \
+    "InstanceType=${INSTANCE_TYPE:-t3.small}" \
     "RootVolumeSize=${ROOT_VOLUME_SIZE:-30}" \
     "ApiIngressCidr=${API_INGRESS_CIDR:-10.10.0.0/16}" \
     "WebApiRepositoryUrl=${WEBAPI_REPOSITORY_URL:-https://github.com/ScaleStackk/webapi.git}" \

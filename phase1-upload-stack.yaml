@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  QuestaCase phase 1 upload infrastructure: a private judgment bucket and one
-  EC2 host for the Web API and single-node Kafka demo broker.
+  LEGACY phase 1 upload topology: a private judgment bucket and one EC2 host
+  for the Web API and single-node Kafka demo broker. Prefer the separated
+  application, messaging, workers, and storage templates for the current POC.
 
 Parameters:
   EnvironmentName:
@@ -12,13 +13,14 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: t3.medium
+    Default: t3.small
     AllowedValues:
       - t3.small
       - t3.medium
       - t3.large
     Description: >-
-      t3.medium is recommended for the Web API and Kafka containers together.
+      t3.small is the low-cost legacy-demo default. Use t3.medium when running
+      the Web API and Kafka containers together under sustained load.
 
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
